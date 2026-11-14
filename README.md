@@ -272,7 +272,7 @@ any signed-in player can get the public address of any player who is online.
 
 What works (tested with three games on 2026-11-14): sign-in and account creation, a public (ranked) lobby, the race
 itself, and the results after it. The server also has a public statistics page at
-`vps4954.rackhostvps.com/backonair/`. What does not work yet:
+[vps4954.rackhostvps.com/backonair](https://vps4954.rackhostvps.com/backonair/): who is online, open games, daily numbers. What does not work yet:
 
 * So far races have run only between PCs on one home network. Between players behind different home routers a
   race may fail. The fix for that (a relay on the server) is not in this release.
