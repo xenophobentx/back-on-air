@@ -1,6 +1,6 @@
 # rdvd update of 2026-11-14 (review fixes): deploy note for the split-second session (VPS owner)
 
-Nothing here has been deployed. The owner triggers the deploy; the split-second session, which runs
+Deployed on 2026-11-14 (from online-site). The owner triggers a deploy; the split-second session, which runs
 vps4954.rackhostvps.com, does it. It replaces the program in `/opt/splitsecond-rdv/` and restarts
 `splitsecond-rdv`. No change to the unit, nftables, Caddy, ssh, `splitsecond-lobby` or `takedawn-lobby`. The
 accounts database and `secret.key` stay as they are (no schema change).

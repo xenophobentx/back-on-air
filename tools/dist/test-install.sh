@@ -1,5 +1,5 @@
 #!/bin/sh
-# test-install.sh WORKDIR - runs install.sh against a fake Steam tree (HOME=WORKDIR/home) and checks the results.
+# test-install.sh WORKDIR - runs install.sh and uninstall.sh against a fake Steam tree (HOME=WORKDIR/home) and checks the results.
 # Nothing outside WORKDIR is touched. Exit status 0 = all checks passed.
 set -u
 SRC=$(cd "$(dirname "$0")" && pwd)
@@ -15,6 +15,11 @@ ok()   { printf 'ok    %s\n' "$*"; }
 bad()  { printf 'FAIL  %s\n' "$*"; FAIL=1; }
 check() { d=$1; shift; if "$@"; then ok "$d"; else bad "$d"; fi; }
 run()  { (cd "$W" && HOME="$H" $SHELL_UNDER_TEST "$PKG/install.sh" "$@") > "$W/out.txt" 2>&1; echo $? > "$W/rc.txt"; }
+# unrun: uninstall.sh by a relative path from another folder (WORKDIR), started with sh like the README says
+unrun() { (cd "$W" && HOME="$H" $SHELL_UNDER_TEST pkg/uninstall.sh "$@") > "$W/out.txt" 2>&1; echo $? > "$W/rc.txt"; }
+# state: the game folder (without patch-backup/) and user.reg, section time stamps left out
+state() { (cd "$GAME" && find . -path ./patch-backup -prune -o -type f -print | LC_ALL=C sort | while read -r f; do cksum "$f"; done
+          sed -e 's/\] [0-9][0-9]*$/]/' -e '/^#time=/d' "$PFX/user.reg"); }
 rc()   { [ "$(cat "$W/rc.txt")" = "$1" ]; }
 said() { grep -q -- "$1" "$W/out.txt"; }
 nbk()  { ls -1 "$GAME/patch-backup" 2>/dev/null | wc -l | tr -d ' '; }
@@ -40,7 +45,7 @@ EOF
 printf '"AppState"\n{\n\t"appid"\t\t"297860"\n\t"name"\t\t"Split/Second"\n\t"installdir"\t\t"SplitSecond"\n}\n' > "$LIB/steamapps/appmanifest_297860.acf"
 echo exe > "$GAME/SplitSecond.exe"
 echo game-data > "$GAME/fmodex.dll"
-cp "$SRC/install.sh" "$PKG/"
+cp "$SRC/install.sh" "$SRC/uninstall.sh" "$PKG/"
 printf 'MZ patch v1 splitsecond.conf\n' > "$PKG/dinput8.dll"
 printf 'fps = 60\n' > "$PKG/splitsecond.conf"
 mkdir -p "$PKG/pipeline-warmup"; printf 'rec a\n' > "$PKG/pipeline-warmup/docks.bin"
@@ -148,6 +153,7 @@ check "no dinput8 line left in user.reg" sh -c "! grep -q '^\"dinput8\"=' '$PFX/
 check "rest of user.reg as before" sh -c "head -n $(wc -l < "$W/user.reg.orig") '$PFX/user.reg' | cmp -s - '$W/user.reg.orig'"
 check "save-backups untouched" [ -f "$GAME/save-backups/x" ]
 check "game files untouched" grep -q game-data "$GAME/fmodex.dll"
+state > "$W/state.8"
 
 echo "== 9. uninstall again: the foreign dinput8.dll stays"
 run --uninstall
@@ -159,6 +165,34 @@ echo "== 10. --game-dir and a missing exe"
 run --game-dir "$W/nowhere"
 check "exit 1" rc 1
 check "says the exe is missing" said "SplitSecond.exe is not in"
+
+echo "== 11. install again, then uninstall.sh: the same result as install.sh --uninstall"
+sleep 1
+run
+check "install: exit 0" rc 0
+check "install: override set" grep -q -x '"dinput8"="native,builtin"' "$PFX/user.reg"
+sleep 1
+unrun
+check "uninstall.sh: exit 0" rc 0
+check "says removed" said "^Removed\."
+check "foreign dinput8.dll put back" grep -q 'some other dinput8' "$GAME/dinput8.dll"
+check "d3d9.dll put back" grep -q 'DXVK d3d9' "$GAME/d3d9.dll"
+check "no dinput8 line left in user.reg" sh -c "! grep -q '^\"dinput8\"=' '$PFX/user.reg'"
+state > "$W/state.11"
+check "game folder and user.reg as after step 8" cmp -s "$W/state.8" "$W/state.11"
+check "two uninstall backups" [ "$(ls -1d "$GAME"/patch-backup/*-uninstall* | wc -l | tr -d ' ')" = 2 ]
+
+echo "== 12. uninstall.sh passes --game-dir on, knows --help, needs install.sh beside it"
+unrun --game-dir "$W/nowhere"
+check "exit 1" rc 1
+check "says the exe is missing" said "SplitSecond.exe is not in"
+unrun --help
+check "--help: exit 0" rc 0
+check "--help: shows its usage" said "sh uninstall.sh --game-dir DIR"
+mkdir -p "$W/alone"; cp "$SRC/uninstall.sh" "$W/alone/"
+(cd "$W/alone" && HOME="$H" $SHELL_UNDER_TEST uninstall.sh) > "$W/out.txt" 2>&1; echo $? > "$W/rc.txt"
+check "alone: exit 1" rc 1
+check "alone: asks to unpack the whole zip" said "Unpack the whole zip first"
 
 if [ $FAIL = 0 ]; then echo "ALL PASSED"; else echo "SOME CHECKS FAILED (last output: $W/out.txt)"; fi
 exit $FAIL

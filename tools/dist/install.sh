@@ -2,7 +2,7 @@
 # install.sh - installs, updates or removes Back on Air, the Split/Second PC patch, on Linux and the Steam Deck (Steam + Proton).
 #
 #   sh install.sh                     install or update
-#   sh install.sh --uninstall         remove the patch, put back what the install had moved away
+#   sh install.sh --uninstall         remove the patch, put back what the install had moved away (= sh uninstall.sh)
 #   sh install.sh --game-dir DIR      use this game folder (the one with SplitSecond.exe) instead of searching
 #
 # What it does: copies dinput8.dll, splitsecond.conf and pipeline-warmup/ next to SplitSecond.exe and tells Wine (in the game's
@@ -274,3 +274,4 @@ say "Done. Start Split/Second from Steam; no launch option is needed."
 say "PC SETTINGS in the game: F1, hold Back (View), or Y on the Options screen."
 say "If Steam resets the prefix (another Proton version, or \"delete compatibility data\"), run this again or set:"
 say "  $LAUNCH"
+say "To remove the patch later: sh uninstall.sh"

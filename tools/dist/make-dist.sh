@@ -2,8 +2,8 @@
 # make-dist.sh - builds the player zip: build/dist/back-on-air-<release>-<date>-<commit>.zip (run by `make dist`).
 #
 # Contents: dinput8.dll, splitsecond.conf (= splitsecond.conf.example, which holds the release defaults), README.md,
-# THIRD_PARTY_NOTICES.md, install.bat + install.ps1 + uninstall.bat (Windows), install.sh (Linux / Steam Deck), and
-# dxvk/ = DXVK 2.7.1's 32-bit d3d9.dll exactly as released, its licence and a README (Windows: renderer = dxvk),
+# THIRD_PARTY_NOTICES.md, install.bat + install.ps1 + uninstall.bat (Windows), install.sh + uninstall.sh (Linux / Steam Deck),
+# and dxvk/ = DXVK 2.7.1's 32-bit d3d9.dll exactly as released, its licence and a README (Windows: renderer = dxvk),
 # pipeline-warmup/ = the pre-compile records of the 5 levels (shader hashes and pipeline state; tools/dist/pipewarm-records.sh).
 # Nothing from the game. The DXVK release tarball is downloaded once into build/cache and checked by SHA-256.
 set -eu
@@ -39,8 +39,8 @@ mkdir -p "$STAGE/dxvk"
 cp build/dinput8.dll "$STAGE/dinput8.dll"
 cp splitsecond.conf.example "$STAGE/splitsecond.conf"
 cp README.md THIRD_PARTY_NOTICES.md "$STAGE/"
-cp tools/dist/install.ps1 tools/dist/install.bat tools/dist/uninstall.bat tools/dist/install.sh "$STAGE/"
-chmod 755 "$STAGE/install.sh"
+cp tools/dist/install.ps1 tools/dist/install.bat tools/dist/uninstall.bat tools/dist/install.sh tools/dist/uninstall.sh "$STAGE/"
+chmod 755 "$STAGE/install.sh" "$STAGE/uninstall.sh"
 sh tools/dist/pipewarm-records.sh "$STAGE"
 
 tmp="build/cache/dxvk-x"; rm -rf "$tmp"; mkdir -p "$tmp"

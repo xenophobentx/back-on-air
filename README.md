@@ -25,7 +25,7 @@ Steam Deck and Linux:
    Proton to load the patch. You do not need a launch option.
 4. Start Split/Second from Steam. Open PC SETTINGS by holding View (Back), with Y on the game's Options screen, or
    with F1.
-5. To uninstall, run `sh install.sh --uninstall` in the same folder.
+5. To uninstall, run `sh uninstall.sh` in the same folder.
 
 ![PC SETTINGS, the GRAPHICS page, open during a race](docs/images/settings-graphics.png)
 
@@ -73,7 +73,7 @@ The zip holds:
 | `dxvk\` | DXVK 2.7.1 (Direct3D 9 on Vulkan), used on Windows only |
 | `pipeline-warmup\` | the pre-compile records of the five track groups (shader hashes and states) |
 | `install.bat`, `install.ps1`, `uninstall.bat` | Windows install script |
-| `install.sh` | Linux and Steam Deck install script |
+| `install.sh`, `uninstall.sh` | Linux and Steam Deck install script |
 | `README.md`, `THIRD_PARTY_NOTICES.md` | this guide, the licences |
 
 ### Windows
@@ -125,7 +125,8 @@ Run the install script of the new zip. Your `splitsecond.conf` stays as it is. T
 ## Uninstall
 
 * Windows: double-click `uninstall.bat`.
-* Steam Deck and Linux: `sh install.sh --uninstall`.
+* Steam Deck and Linux: open a terminal in the unpacked folder (as for the install) and type `sh uninstall.sh`.
+  `sh install.sh --uninstall` does the same.
 
 It removes the patch's files and puts back what the install had moved away. Your settings file goes into
 `patch-backup\<date>-uninstall`. It does not touch your saves, `save-backups`, `shader-cache` (you can delete it),
@@ -269,6 +270,16 @@ cannot sign in to it without its key.
 Races are peer to peer, as with the game's original servers: the games of a race send to each other directly. So
 any signed-in player can get the public address of any player who is online.
 
+What works (tested with three games on 2026-11-14): sign-in and account creation, a public (ranked) lobby, the race
+itself, and the results after it. The server also has a public statistics page at
+`vps4954.rackhostvps.com/backonair/`. What does not work yet:
+
+* So far races have run only between PCs on one home network. Between players behind different home routers a
+  race may fail. The fix for that (a relay on the server) is not in this release.
+* Private games with invitations: the server refuses them, and the friends list is empty. A public race needs 3
+  players, so 2 players alone cannot race.
+* No leaderboards in the game.
+
 ### For testing and diagnosis
 
 These are off by default. You only need them when you report a problem.
@@ -325,7 +336,9 @@ stalls of 100 ms or more, the worst 1.4 s. With pre-compile, none went over 70 m
 * Windows memory: the game is a 32-bit program with 2 GB of memory. The patch keeps DXVK inside that limit
   (`dxvk_fit`), but very high settings plus DXVK leave less room.
 * TAA (`aa = taa` / `taa_high`) can smear slightly on fast-moving cars, because the game gives no per-object motion.
-* Online is experimental. It uses one replacement server (`online_server`).
+* Online is experimental. It uses one replacement server (`online_server`). Races are tested on one home network
+  only, private games with invitations do not work, and a public race needs 3 players. See
+  [Online](#online-experimental).
 
 ## Troubleshooting
 

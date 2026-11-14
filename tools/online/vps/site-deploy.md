@@ -1,6 +1,6 @@
 # Back on Air online pages at `/backonair/`: deploy note for the split-second session (VPS owner)
 
-Nothing here has been deployed. The owner triggers the deploy; the split-second session, which runs
+Deployed: the pages are up at `/backonair/` (checked 2026-11-14). The owner triggers a deploy; the split-second session, which runs
 vps4954.rackhostvps.com, does it. It changes only the rdvd service (`splitsecond-rdv`), adds one Caddy snippet,
 and adds one link to the shared `/` index. It does not touch `splitsecond-lobby`, `takedawn-lobby`, nftables or ssh.
 

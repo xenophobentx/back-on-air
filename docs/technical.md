@@ -85,7 +85,7 @@ What both scripts do:
 ## Uninstall
 
 * Windows: double-click `uninstall.bat` (or run `install.bat /uninstall`).
-* Steam Deck / Linux: `sh install.sh --uninstall`.
+* Steam Deck / Linux: `sh uninstall.sh` (or `sh install.sh --uninstall`).
 
 It removes `dinput8.dll` (only when it is the patch's), the `dxvk` folder (Windows, only the patch's), and moves
 `splitsecond.conf`, `splitsecond.conf.new` and `splitsecond-patch.log` into `patch-backup/<date>-uninstall`. It puts
@@ -1115,11 +1115,11 @@ declares, and then the game keeps its save in a separate folder (`<Documents>\Sp
 `dlc_save_profile = off`. Log lines `[overlay]`: the files the folder holds, the hooked import slots, each redirected
 file once, the track ids added.
 
-## Online (`src/online.cpp`, `tools/online/`): a measurement spike
+## Online (`src/online.cpp`, `tools/online/`)
 
 The game's ONLINE menu is a Quazal Rendez-Vous client (Net-Z / Rendez-Vous 2008.9 SP1) for a backend that is gone
-(`splitsecpclive.quazal.net`, UDP 31120). `docs/plan-online.md` is the plan for a server of our own. What exists
-today is only what was needed to measure the client:
+(`splitsecpclive.quazal.net`, UDP 31120). `docs/plan-online.md` is the plan for our own server, `tools/online/rdvd`. The
+parts:
 
 * `online_server = host[:port]` (no line or an empty value: the project's server `vps4954.rackhostvps.com`, so an
   updater's older conf is online too; `off`/`false`/`0`/`no`/`none`: nothing is hooked, no thread is started). Every
@@ -1146,6 +1146,10 @@ today is only what was needed to measure the client:
   the login half of the backend (tickets, secure connect, Register, account creation through the guest login), far
   enough for the game to create an account, sign in and open its Online menu. It keeps nothing on disk, has no
   limits of any kind and is not a server: never expose it to a network.
-* `tools/online/rdvd` is the server being built from that (see `tools/online/README.md`): the game signs in,
-  creates its account, opens the Online menu and hosts a public lobby against it. Not deployed; a second game
-  joining needs the peer tunnel in the DLL (plan section 4), which does not exist yet.
+* `tools/online/rdvd` is the server built from that (see `tools/online/README.md`). It runs on
+  `vps4954.rackhostvps.com` since 2026-11-11. Tested on 2026-11-14 with three games on the 1.0 DLL: sign-in and
+  account creation, a public (ranked) lobby created and joined, a race started and finished by all players, the
+  results and credits in the lobby afterwards. rdvd also writes the public statistics page at `/backonair/`.
+  Limits of 1.0: races have run only between PCs on one home network (peer to peer; between different home routers
+  untested, and the DLL has no tunnel to the relay port yet, plan section 4); private games with invitations are
+  refused and the friends list is empty, so a race needs 3 players in a public lobby; no leaderboards.

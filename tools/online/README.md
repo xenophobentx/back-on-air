@@ -46,11 +46,18 @@ Time-outs and limits (`transport.py`, `limits.py`; per source address unless sai
 | account creation | burst 5, then 5 an hour; everybody together: burst 500, then 500 an hour; a taken name costs nothing |
 | a full rate-limit table (4096 keys) | forgets the key used longest ago |
 
-State of the milestones (plan section 8): deployed on the VPS (`vps4954.rackhostvps.com`) since 2026-11-11. The game signs in,
-creates its account, opens the Online menu and hosts a public lobby (M1, M2), and **two real games meet in one public
-lobby** through the VPS and see each other (2026-11-11, direct over one LAN). The race does not start yet (both stay in
-"WAITING FOR PLAYERS"); not built: the tunnel in the DLL, race start, results, leaderboards (protocols 101/102/26 are
-answered "not implemented"). `docs/plan-online.md` section 12 has the exact state and the next steps.
+State (plan section 8): rdvd runs on the VPS (`vps4954.rackhostvps.com`) since 2026-11-11. Tested on 2026-11-14
+with three games on the 1.0 DLL: the games sign in and create their accounts by themselves, a public (ranked) lobby is
+created and joined, the race starts and finishes for all players, and the lobby shows the results and credits
+afterwards. rdvd also writes the public statistics page at `/backonair/`. Limits of 1.0:
+
+* Races have run only between PCs on one home network. The race traffic goes peer to peer; between different home
+  routers it is untested and may fail. The relay port would fix that, but the DLL does not use it yet.
+* Private games with invitations are refused (invitations are not kept yet) and the friends list is empty. A public
+  race needs 3 players, so 2 players alone cannot start one.
+* No leaderboards in the game (protocols 101/102/26 are answered "not implemented").
+
+`docs/plan-online.md` section 12 has the exact state and the next steps.
 
 Run locally: `python3 tools/online/rdvd_server.py --db /tmp/a.sqlite --secret-file /tmp/s.key --log-calls`, the
 game with `online_server = localhost` in `splitsecond.conf`. `--log-calls` prints names and call bytes: for
