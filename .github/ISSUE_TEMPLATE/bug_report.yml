@@ -1,0 +1,93 @@
+name: Bug report
+description: Something doesn't work, crashes or looks wrong. One problem per issue.
+labels: [bug]
+body:
+  - type: dropdown
+    id: platform
+    attributes:
+      label: System
+      options:
+        - Windows
+        - Steam Deck
+        - Linux
+    validations:
+      required: true
+  - type: input
+    id: proton
+    attributes:
+      label: Proton version
+      description: Steam Deck and Linux only. Steam > Split/Second > Properties > Compatibility, e.g. "Proton 9.0-4" or "GE-Proton9-20".
+  - type: input
+    id: gpu
+    attributes:
+      label: GPU
+      description: One line, e.g. "Radeon RX 9060 XT" or "Steam Deck OLED".
+    validations:
+      required: true
+  - type: dropdown
+    id: renderer
+    attributes:
+      label: Renderer
+      description: The `renderer` line of `splitsecond.conf`. On Linux and the Steam Deck, Proton always uses its own DXVK.
+      options:
+        - dxvk (the default)
+        - native (Windows' own Direct3D 9)
+        - Proton (Steam Deck / Linux)
+    validations:
+      required: true
+  - type: input
+    id: fps
+    attributes:
+      label: fps setting
+      description: The `fps` line of `splitsecond.conf`, e.g. 60, 120 or native.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Patch version
+      description: The name of the zip you installed, e.g. back-on-air-1.0-20261114-7056b31.zip.
+    validations:
+      required: true
+  - type: input
+    id: online_name
+    attributes:
+      label: Online name
+      description: Online problems only. Your name as the game shows it online, with its 3-character tag.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what did you expect?
+      description: One problem per issue. If you found several, open an issue for each, so each one can be fixed and closed on its own.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: How to make it happen
+      description: Mode, track or menu, the settings you changed, and whether it happens every time or only sometimes.
+    validations:
+      required: true
+  - type: textarea
+    id: log
+    attributes:
+      label: Log file
+      description: "Required. `splitsecond-patch.log` is next to `dinput8.dll` in the game folder (Steam > Split/Second > Properties > Installed Files > Browse). Send the log from a session that shows the problem. After a crash and a restart, the crashed session's log is `splitsecond-patch.prev.log`. For stutter, set `frame_log = true` in `splitsecond.conf` first. Drag the file here. I can't look into a report without it."
+    validations:
+      required: true
+  - type: textarea
+    id: media
+    attributes:
+      label: Screenshot or video
+      description: If you can see the problem.
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before you send
+      options:
+        - label: I play my own copy of the game; this report has no game files or links to them.
+          required: true
+        - label: I searched the existing issues.
+          required: true
+        - label: This issue is about one problem only.
+          required: true

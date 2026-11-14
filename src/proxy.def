@@ -1,0 +1,7 @@
+LIBRARY dinput8
+EXPORTS
+  DirectInput8Create=ss_DirectInput8Create@20 @1
+  DllCanUnloadNow=ss_DllCanUnloadNow@0 @2 PRIVATE
+  DllGetClassObject=ss_DllGetClassObject@12 @3 PRIVATE
+  DllRegisterServer=ss_DllRegisterServer@0 @4 PRIVATE
+  DllUnregisterServer=ss_DllUnregisterServer@0 @5 PRIVATE

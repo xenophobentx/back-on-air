@@ -1,0 +1,60 @@
+# /etc/systemd/system/splitsecond-rdv.service
+# Split/Second PC: Rendez-Vous server for the game's own ONLINE menu (tools/online/rdvd in split-second-pcpatch).
+# Modelled on splitsecond-lobby.service of the console port; shares the box with it, with Caddy and with the
+# Burnout 3 lobby, so the limits are tight on purpose.
+[Unit]
+Description=Split/Second PC online (Rendez-Vous server: sign-in, matchmaking, relay)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=ss-rdv
+Group=ss-rdv
+WorkingDirectory=/srv/splitsecond-rdv
+# The program is root-owned and outside ReadWritePaths: the service cannot rewrite its own code.
+# --public-address is what the login answer tells clients to use for the secure port: the box's host name, resolved
+# by rdvd at start (it refuses to start when the name resolves to a loopback address, e.g. an /etc/hosts line for the
+# machine's own name). No --bind: all interfaces.
+# Web pages (/backonair/ through Caddy): statistics in /srv/splitsecond-rdv/stats, the pages in the runtime folder
+# /run/splitsecond-rdv (Caddy reads it; rdvd makes it 0711 so the owner's token folder cannot be listed).
+# --geoip is optional (DB-IP Lite country CSV); --race-detect stays off until a live run confirms it (stats.py).
+ExecStart=/usr/bin/python3 -I /opt/splitsecond-rdv/rdvd_server.py --public-address vps4954.rackhostvps.com --auth-port 31120 --secure-port 31121 --relay-port 31122 --db /srv/splitsecond-rdv/accounts.sqlite --secret-file /srv/splitsecond-rdv/secret.key --stats-dir /srv/splitsecond-rdv/stats --public-dir /run/splitsecond-rdv --admin-token-file /srv/splitsecond-rdv/admin-token --geoip /srv/splitsecond-rdv/dbip-country-lite.csv
+RuntimeDirectory=splitsecond-rdv
+RuntimeDirectoryMode=0755
+Restart=always
+RestartSec=3
+TimeoutStopSec=10
+UMask=0077
+
+# Limits
+MemoryMax=128M
+CPUQuota=50%
+LimitNOFILE=1024
+TasksMax=64
+
+# Sandbox (the same set as the lobby's unit)
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/srv/splitsecond-rdv
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+# AF_UNIX: Python's event loop makes a socket pair for itself.
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+SystemCallFilter=@system-service
+SystemCallArchitectures=native
+CapabilityBoundingSet=
+AmbientCapabilities=
+
+[Install]
+WantedBy=multi-user.target

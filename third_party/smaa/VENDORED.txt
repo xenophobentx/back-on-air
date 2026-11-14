@@ -1,0 +1,10 @@
+SMAA (Enhanced Subpixel Morphological Antialiasing), reference implementation
+https://github.com/iryoku/smaa, commit 71c806a838bdd7d517df19192a20f0c61b3ca29d
+MIT (LICENSE.txt).
+
+Unmodified: SMAA.hlsl, and Textures/AreaTex.h (160x560, two bytes a texel) and
+Textures/SearchTex.h (64x16, one byte) as AreaTex.h and SearchTex.h.
+
+src/postfx.cpp embeds SMAA.hlsl as it is (compiled at run time for Shader
+Model 3 with D3DXCompileShader, SMAA_HLSL_3, preset HIGH) and includes the two
+tables (loaded as D3DFMT_A8L8 and D3DFMT_L8, as the headers say for DX9).

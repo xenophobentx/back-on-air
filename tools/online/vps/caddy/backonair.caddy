@@ -1,0 +1,15 @@
+# Back on Air (Split/Second PC online, rdvd): the public page, stats.json and the owner's token folder, written by
+# rdvd into its RuntimeDirectory /run/splitsecond-rdv (folder 0711: no listing; files 0644; Caddy only reads).
+# Until the files exist this path answers 404. The JSON files must never be cached for long.
+# The pages carry their CSS and script inline and load nothing from elsewhere, hence the CSP below.
+redir /backonair /backonair/ 308
+
+handle_path /backonair/* {
+	root * /run/splitsecond-rdv
+	@json path *.json *.jsonl
+	@notjson not path *.json *.jsonl
+	header @json Cache-Control "no-cache"
+	header @notjson Cache-Control "public, max-age=3600"
+	header Content-Security-Policy "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; font-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+	file_server
+}

@@ -1,0 +1,195 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>Back on Air online</title>
+<link id="fav" rel="icon" href="data:,">
+<style>
+@font-face{font-family:"Barlow Condensed";font-weight:500;font-display:swap;src:url(fonts/BarlowCondensed-Medium.ttf) format("truetype")}
+@font-face{font-family:"Barlow Condensed";font-weight:700;font-display:swap;src:url(fonts/BarlowCondensed-Bold.ttf) format("truetype")}
+:root{--ink:#06080b;--panel:#121519;--panel2:#1b1f25;--plate:#2b3037;--rule:#2c333c;--text:#c9d3dc;--dim:#7d8894;--lit:#f4f7fa;
+--ice:#8fdcff;--glow:rgba(84,180,255,.55);--hud:#5fd2ff;--red:#ff3b30;--laser:#e0261b;--orange:#ff7a1f;--pb:#d7ef2e;--good:#5fd2ff;
+--head:"Barlow Condensed","Arial Narrow","Roboto Condensed",sans-serif}
+*{box-sizing:border-box}
+html{background:var(--ink)}
+body{margin:0;color:var(--text);font:15px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;min-height:100vh;
+background:radial-gradient(55% 45% at 18% 8%,rgba(255,110,40,.22),transparent 70%),
+radial-gradient(45% 40% at 92% 30%,rgba(70,150,255,.14),transparent 70%),
+radial-gradient(80% 60% at 50% 110%,rgba(255,255,255,.04),transparent 70%),var(--ink)}
+/* the studio's red laser lines and the broadcast scanlines */
+body:before{content:"";position:fixed;inset:0;pointer-events:none;
+background:linear-gradient(168deg,transparent 0 21%,rgba(224,38,27,.55) 21.1%,transparent 21.4%),
+linear-gradient(173deg,transparent 0 33%,rgba(224,38,27,.35) 33.08%,transparent 33.3%),
+linear-gradient(12deg,transparent 0 71%,rgba(224,38,27,.28) 71.06%,transparent 71.25%)}
+body:after{content:"";position:fixed;inset:0;pointer-events:none;background:repeating-linear-gradient(0deg,rgba(255,255,255,.025) 0 1px,transparent 1px 3px)}
+main{position:relative;z-index:1;max-width:920px;margin:0 auto;padding:22px 16px 40px}
+header{display:flex;align-items:center;gap:14px;margin-bottom:20px}
+header img{width:52px;height:52px;flex:none;filter:drop-shadow(0 0 10px rgba(255,122,31,.45))}
+h1,h2,.num,.label,th,.badge,button,.plate{font-family:var(--head);text-transform:uppercase}
+h1{margin:0;font-size:2rem;line-height:1;font-weight:500;font-style:italic;letter-spacing:.02em;color:var(--lit);
+text-shadow:0 0 14px rgba(143,220,255,.35)}
+h1 span{color:var(--ice)}
+.strip{margin-top:6px;padding:2px 10px 2px 2px;font-family:var(--head);font-weight:500;font-style:italic;text-transform:uppercase;
+letter-spacing:.04em;font-size:.95rem;color:#9aa5b0;border-top:1px solid rgba(143,220,255,.35);
+background:linear-gradient(90deg,rgba(255,255,255,.07),rgba(255,255,255,.02) 70%,transparent)}
+.stat{margin-left:auto;text-align:right;font:500 italic 1rem var(--head);text-transform:uppercase;color:var(--dim);white-space:nowrap}
+.dot{display:inline-block;width:9px;height:9px;border-radius:50%;background:var(--dim);margin-right:7px}
+.up .dot{background:var(--hud);box-shadow:0 0 9px var(--hud)}
+.down .dot{background:var(--red);box-shadow:0 0 9px var(--red)}
+/* cards: the front end's dark rounded slabs; a lit card carries the ice-blue glow */
+section,.card{position:relative;background:linear-gradient(180deg,var(--panel2),var(--panel) 45%,#0d0f12);
+border:1px solid #000;border-radius:12px;padding:12px 16px 14px;margin-bottom:14px;
+box-shadow:inset 0 1px 0 rgba(255,255,255,.07),inset 0 0 0 1px rgba(255,255,255,.035),0 10px 24px rgba(0,0,0,.55)}
+section.lit,.card.lit{border-color:rgba(143,220,255,.85);box-shadow:0 0 0 1px rgba(143,220,255,.25),0 0 22px var(--glow),inset 0 1px 0 rgba(255,255,255,.1)}
+h2{display:inline-block;margin:0 0 12px;padding-bottom:4px;font-size:1.25rem;font-weight:700;letter-spacing:.02em;color:var(--lit);
+background:linear-gradient(90deg,rgba(255,255,255,.85),rgba(255,255,255,.85) 40%,transparent) 0 100%/100% 2px no-repeat;min-width:40%}
+.cards{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:14px}
+.cards .card{margin:0;padding:0;overflow:hidden;text-align:center}
+.num{padding:16px 8px 10px;font-size:2.7rem;line-height:1;font-weight:700;color:var(--lit);text-shadow:0 0 16px rgba(143,220,255,.28)}
+.plate,.label{display:block;margin:0 6px 6px;padding:5px 6px;border-radius:0 0 7px 7px;font-size:1rem;font-weight:700;letter-spacing:.03em;
+color:#e9eef2;background:linear-gradient(180deg,#3a4048,#262a30);box-shadow:inset 0 1px 0 rgba(255,255,255,.12)}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.two section{margin:0}
+.kv{display:flex;justify-content:space-between;align-items:baseline;border-bottom:1px solid rgba(255,255,255,.06);padding:5px 0}
+.kv:last-child{border:0}
+.kv b{font:700 1.35rem/1 var(--head);color:var(--hud);text-shadow:0 0 8px rgba(95,210,255,.35)}
+.kv i{color:var(--dim);font:500 italic .95rem var(--head);text-transform:uppercase}
+table{width:100%;border-collapse:collapse;table-layout:fixed}
+th:nth-child(1),td:nth-child(1){width:54px}th:nth-child(3),td:nth-child(3){width:96px}th:nth-child(4),td:nth-child(4){width:132px}
+th{text-align:left;font-size:.9rem;font-weight:500;font-style:italic;color:var(--dim);padding:4px 6px;border-bottom:1px solid var(--rule)}
+td{padding:8px 6px;border-bottom:1px solid rgba(255,255,255,.05);vertical-align:middle;overflow-wrap:anywhere}
+td.n{white-space:nowrap;font:700 1.15rem var(--head);color:var(--lit)}
+td.n.pos{color:var(--red);text-shadow:0 0 8px rgba(255,59,48,.45)}
+/* states as the prompt bar's key caps */
+.badge{display:inline-block;font-size:.95rem;font-weight:500;font-style:italic;letter-spacing:.03em;color:var(--ice);white-space:nowrap}
+.badge:before{content:"";display:inline-block;width:12px;height:12px;margin-right:7px;vertical-align:-1px;border-radius:3px;
+background:linear-gradient(180deg,#5a6069,#33373d);box-shadow:inset 0 1px 0 rgba(255,255,255,.25)}
+.racing{opacity:.6}
+.racing .badge{color:var(--red)}.racing .badge:before{background:linear-gradient(180deg,#ff5a4f,#9c1c14)}
+.empty{color:var(--dim);padding:6px 0;font:500 italic 1.05rem var(--head);text-transform:uppercase}
+.sub{color:var(--dim);font-size:.9rem}
+.sec2{margin-top:14px;font:500 italic .95rem var(--head);text-transform:uppercase}
+.tabs{float:right;display:flex;gap:6px}
+button{background:linear-gradient(180deg,#4a5059,#2b2f35);color:#e3e8ec;border:0;border-radius:5px;padding:4px 10px;font-size:.9rem;font-weight:700;cursor:pointer;box-shadow:inset 0 1px 0 rgba(255,255,255,.18)}
+button[aria-pressed=true]{color:#03121a;background:linear-gradient(180deg,#bfeaff,#62c3ef);box-shadow:0 0 12px var(--glow)}
+button[hidden]{display:none}
+#chart{width:100%;height:150px;display:block}
+.axis{display:flex;justify-content:space-between;color:var(--dim);font:500 italic .9rem var(--head);margin-top:4px}
+.bar{margin:7px 0}
+.bar div{height:8px;border-radius:2px;background:linear-gradient(90deg,#2c8fc7,var(--ice));min-width:2px;box-shadow:0 0 8px rgba(95,210,255,.3)}
+.bar span{display:flex;justify-content:space-between;font-size:.9rem}
+footer{margin-top:22px;padding:10px 12px;color:var(--dim);font-size:.85rem;border-top:1px solid rgba(143,220,255,.25);
+background:repeating-linear-gradient(0deg,rgba(255,255,255,.03) 0 1px,transparent 1px 3px),linear-gradient(90deg,rgba(255,255,255,.05),transparent)}
+footer a{color:var(--ice)}
+@media(max-width:640px){.cards{grid-template-columns:1fr 1fr}.two{grid-template-columns:1fr}.num{font-size:2.2rem}
+h1{font-size:1.5rem}header img{width:42px;height:42px}.strip{font-size:.8rem}.stat{font-size:.85rem}
+th:nth-child(1),td:nth-child(1){width:34px}th:nth-child(3),td:nth-child(3){width:72px}th:nth-child(4),td:nth-child(4){width:108px}.tabs{float:none;margin-bottom:8px}}
+</style>
+</head>
+<body>
+<main>
+<header>
+<img id="logo" alt="" src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0naHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmcnIHZpZXdCb3g9JzAgMCA2NCA2NCc+PHBhdGggZD0nTTEwIDUwIDMwIDEyaDlMMTkgNTB6JyBmaWxsPScjZmY3YTFmJy8+PHBhdGggZD0nTTI5IDUwIDQ5IDEyaDdMMzYgNTB6JyBmaWxsPScjOGZkY2ZmJy8+PC9zdmc+">
+<div><h1>Back on Air <span>online</span></h1><div class="strip">Split/Second on PC: the community server for the game's own online play</div></div>
+<div class="stat" id="state"><span class="dot"></span><span id="stext">connecting</span></div>
+</header>
+
+<div class="cards">
+<div class="card lit"><div class="num" id="players">-</div><div class="label">Players online</div></div>
+<div class="card"><div class="num" id="waiting">-</div><div class="label">Games waiting</div></div>
+<div class="card"><div class="num" id="racing">-</div><div class="label" id="racingLabel">Games racing</div></div>
+<div class="card"><div class="num" id="uptime">-</div><div class="label">Server uptime</div></div>
+</div>
+
+<section>
+<h2>Open games</h2>
+<div id="games"></div>
+</section>
+
+<div class="two">
+<section>
+<h2>Today (UTC)</h2>
+<div id="today"></div>
+</section>
+<section>
+<h2>Games by mode, today</h2>
+<div id="modes"></div>
+</section>
+</div>
+
+<section style="margin-top:14px">
+<div class="tabs" id="tabs">
+<button data-k="unique_players" aria-pressed="true">Players</button>
+<button data-k="signins" aria-pressed="false">Sign-ins</button>
+<button data-k="games_created" aria-pressed="false">Games</button>
+<button data-k="games_started" aria-pressed="false" id="tabRaces" hidden>Races</button>
+</div>
+<h2>Last 30 days</h2>
+<svg id="chart" viewBox="0 0 300 100" preserveAspectRatio="none" role="img" aria-label="Bar chart of the last 30 days"></svg>
+<div class="axis"><span id="d0"></span><span id="dmax"></span><span id="d1"></span></div>
+</section>
+
+<footer>
+Back on Air is an unofficial patch for the Steam release of Split/Second. We run this server for the game's own
+online play. It signs players in and lists games; the races themselves run between the players' computers.
+<span id="docs"></span>
+The numbers here are counts only. We do not show or keep player names, game names or addresses.
+The server never receives a Steam account name or SteamID. This is a fan project, not affiliated with or endorsed by Disney or
+Black Rock Studio. Font: Barlow Condensed (SIL Open Font License).
+</footer>
+</main>
+<script>
+"use strict";
+var DOCS={{DOCS_URL}};
+var $=function(i){return document.getElementById(i)},key="unique_players",last=null;
+try{$("fav").href=$("logo").src}catch(e){}
+function el(t,c,x){var e=document.createElement(t);if(c)e.className=c;if(x!=null)e.textContent=x;return e}
+if(DOCS){var a=el("a",0,"how to play online");a.href=DOCS;a.rel="noopener";$("docs").append("New here? ",a,". ")}
+function dur(s){s=Math.max(0,Math.floor(s));var d=Math.floor(s/86400),h=Math.floor(s%86400/3600),m=Math.floor(s%3600/60);
+return d?d+"d "+h+"h":h?h+"h "+m+"m":m+"m"}
+function kv(box,k,v,note){var r=el("div","kv");r.appendChild(el("span",0,k));r.appendChild(v==null?el("i",0,note||"pending a live test"):el("b",0,v));box.appendChild(r)}
+function rows(list,cls,from){var t=el("table",cls),h=el("tr");
+["#","Mode","Players","State"].forEach(function(x){h.appendChild(el("th",0,x))});t.appendChild(h);
+list.forEach(function(g,i){var r=el("tr");
+r.appendChild(el("td","n pos",String(from+i+1)));r.appendChild(el("td",0,g.mode||"Not known yet"));r.appendChild(el("td","n",g.players+" / "+g.max));
+var s=el("td"),b=el("span","badge",g.state==="racing"?"In a race":"Waiting");s.appendChild(b);r.appendChild(s);t.appendChild(r)});return t}
+function chart(d){var days=(d.days||[]).slice(-29).concat([d.today]),svg=$("chart"),max=1,n=30,w=300/n;
+while(svg.firstChild)svg.removeChild(svg.firstChild);
+days.forEach(function(x){max=Math.max(max,x[key]||0)});
+var off=n-days.length,NS="http://www.w3.org/2000/svg";
+days.forEach(function(x,j){var v=x[key],h=Math.max(v?1.5:0.4,(v||0)/max*92),r=document.createElementNS(NS,"rect");
+r.setAttribute("x",(off+j)*w+.6);r.setAttribute("width",w-1.2);r.setAttribute("y",100-h);r.setAttribute("height",h);
+r.setAttribute("rx",1);r.setAttribute("fill",j===days.length-1?"#d7ef2e":"#3fb4ea");
+var t=document.createElementNS(NS,"title");t.textContent=x.date+": "+(v==null?"not counted":v);r.appendChild(t);svg.appendChild(r)});
+$("d0").textContent=days[0].date;$("d1").textContent=days[days.length-1].date;$("dmax").textContent="max "+max}
+function draw(d){last=d;var n=d.now,t=d.today,age=Date.now()/1000-d.updated;
+$("players").textContent=n.players;$("waiting").textContent=n.games_waiting;
+$("racing").textContent=n.games_racing==null?"–":n.games_racing;
+$("racingLabel").textContent=n.games_racing==null?"Games racing (soon)":"Games racing";
+$("tabRaces").hidden=!d.race_detect;if(!d.race_detect&&key==="games_started")key="unique_players";
+$("uptime").textContent=dur(d.updated-d.started);
+var up=age<120;$("state").className="stat "+(up?"up":"down");$("stext").textContent=up?"online":"no update for "+dur(age);
+var g=$("games");g.textContent="";var w=d.games.filter(function(x){return x.state==="waiting"}),r=d.games.filter(function(x){return x.state!=="waiting"});
+if(w.length)g.appendChild(rows(w,"",0));else g.appendChild(el("div","empty","No games waiting for players right now."));
+if(r.length){g.appendChild(el("div","sub sec2","Under way (cannot be joined)"));g.appendChild(rows(r,"racing",w.length))}
+var pv=n.games_private|0;if(pv)g.appendChild(el("div","sub sec2",pv+(pv>1?" private games are":" private game is")+" not listed."));
+var b=$("today");b.textContent="";kv(b,"Sign-ins",t.signins);kv(b,"Different players",t.unique_players);kv(b,"Most players at once",t.peak_players);
+kv(b,"Games created",t.games_created);kv(b,"Races started",t.games_started);
+var m=$("modes"),mx=1;m.textContent="";
+if(!d.modes_known){kv(m,"Games created",t.games_created);kv(m,"By mode",null);}
+else{t.by_mode.forEach(function(x){mx=Math.max(mx,x.created)});
+if(!t.by_mode.length)m.appendChild(el("div","empty","No games yet today."));
+t.by_mode.forEach(function(x){var row=el("div","bar"),s=el("span");
+s.appendChild(el("span",0,x.mode));s.appendChild(el("b",0,x.created+" created"+(x.started==null?"":", "+x.started+" started")));row.appendChild(s);
+var f=el("div");f.style.width=Math.round(x.created/mx*100)+"%";row.appendChild(f);m.appendChild(row)})}
+chart(d)}
+function load(){fetch("stats.json?"+Date.now(),{cache:"no-store"}).then(function(r){if(!r.ok)throw 0;return r.json()}).then(draw).catch(function(){
+$("state").className="stat down";$("stext").textContent=last?"no update":"no data"})}
+Array.prototype.forEach.call($("tabs").children,function(b){b.onclick=function(){key=b.getAttribute("data-k");
+Array.prototype.forEach.call($("tabs").children,function(x){x.setAttribute("aria-pressed",x===b)});if(last)chart(last)}});
+load();setInterval(load,20000);
+</script>
+</body>
+</html>
