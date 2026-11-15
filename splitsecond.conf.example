@@ -247,9 +247,11 @@ skip_intro = true
 # (SS_BOOT_TO_MENU=0|1)
 #boot_to_menu = true
 # Texture filtering (same key and values as the port's ANISOTROPY row). N: every linear-filtered texture with mips is
-# filtered anisotropically at N, whatever the game asked, and N caps what it asks of the others. off: none at all.
-# game: the game's own rule (anisotropic at the device's maximum at quality HIGH / VERY HIGH only). (SS_ANISOTROPY)
-anisotropy = 16
+# filtered anisotropically at N, whatever the game asked, and N caps what it asks of the others; textures without mips
+# (render targets, colour look-ups) and volume / cube textures are never filtered anisotropically. off: none at all.
+# game (the default, PC ORIGINAL in the menu): the game's own rule (anisotropic at the device's maximum at quality
+# HIGH / VERY HIGH only). (SS_ANISOTROPY)
+anisotropy = game
 
 # Scenery LOD distances (the port's DRAW DISTANCE): console = each level's own values (the PC's are the console's);
 # 1.5 / 2 = the high and low distances and their fades times the factor, the mid distance and the streaming radius

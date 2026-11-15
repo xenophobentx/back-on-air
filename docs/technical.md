@@ -583,9 +583,18 @@ and `main menu reached after N s with no button pressed`, or why it handed off.
 
 ### Texture filtering and detail (`anisotropy`, `draw_distance`, `shadow_distance`, `opponent_cars`; `src/quality.cpp`)
 
-Keys, values and defaults as the port's settings rows. `anisotropy` takes slot 69 (`SetSamplerState`) of the same
+Keys and values as the port's settings rows; `anisotropy` defaults to `game` (PC ORIGINAL), the
+others as the port. `anisotropy` takes slot 69 (`SetSamplerState`) of the same
 device vtable as the present hook (in d3d9.dll's memory): with N, a sampler whose min and mag filters are linear and
-which has a mip filter gets `MINFILTER = ANISOTROPIC`, `MAXANISOTROPY = N`; others are capped at N; `off` removes it;
+which has a mip filter gets `MINFILTER = ANISOTROPIC`, `MAXANISOTROPY = N` when its bound texture is a 2D texture with
+more than one mip level (slot 65, `SetTexture`, tells which); a sampler on any other texture (one level: render targets,
+the colour grade's cube; volume, cube) is kept off anisotropic, also where the game asked for it (NVIDIA applies
+anisotropy to one-level textures, AMD does not: GitHub #1, red contour lines from the grade's look-up); others are
+capped at N; `off` removes it. The title's own state is always passed on; the min filter and max anisotropy that follow
+from the others are sent only when they differ from what the hook last sent for that sampler (forgotten at every
+present, as a Reset or a state block can set samplers behind the hook), about half the calls of sending them every time;
+with `frame_log` an `[aniso] a second:` line every 10 s counts the title's states, the calls sent, the re-sends skipped,
+the textures bound and the kind changes;
 `game` leaves the hook out (the game's own rule, 0x516A80: anisotropic at the device maximum at HIGH / VERY HIGH only).
 `draw_distance` and `opponent_cars` write tunables in the game's data (never its code), re-applied whenever the game
 loads them again (a level's `CityLOD.params`, `PlayerLOD_ps3.params`): the scenery LOD distances 0xD38A90.. (high, low,

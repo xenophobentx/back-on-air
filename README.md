@@ -197,7 +197,7 @@ The overlay also has CALIBRATE HDR, a test screen for these values.
 | `smaa_predication` | `true` | SMAA also uses depth: cleaner edges, less blur on text and textures. |
 | `taa_lod_bias` | `-0.5` | With TAA: slightly sharper textures (-2 to 0). |
 | `sharpen` | `0` | Sharpening: 0, 0.25, 0.5, 0.75, 1. |
-| `anisotropy` | `16` | Texture filtering: `off`, `game`, 2-16. |
+| `anisotropy` | `game` | Texture filtering: `game` (PC original), `off`, 2-16. |
 | `draw_distance` | `console` | Scenery detail distance: `console`, `1.5`, `2`. |
 | `shadow_distance` | `console` | How far sun shadows reach: `console`, `1.5`, `2`. |
 | `shadow_smoothing` | `high` | Hides the hard line where shadow detail changes: `off`, `on`, `high`. |
@@ -365,6 +365,12 @@ Linux) and which `fps` setting you use. For stutter, also set `frame_log = true`
 but not the PC's name, its LAN address or the user name in a folder path (that one reads `<user>`).
 
 ## Release notes
+
+### 2026-11-15: 1.0.1
+
+* Fixed red contour lines over the whole picture on NVIDIA graphics cards when texture filtering was set above
+  PC original. Anisotropic filtering now goes only to normal surface textures.
+* Texture filtering now defaults to PC original (the game's own setting). 2x to 16x are still in the menu.
 
 ### 2026-11-14: first release
 

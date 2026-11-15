@@ -1,5 +1,5 @@
 // Image quality and detail rows, with the port's keys, values and defaults (its settings catalogue):
-//   anisotropy     = game | off | 2 | 4 | 8 | 16   (16)       SS_ANISOTROPY
+//   anisotropy     = game | off | 2 | 4 | 8 | 16   (game)     SS_ANISOTROPY
 //   draw_distance  = console | 1.5 | 2             (console)  SS_DRAW_DISTANCE
 //   opponent_cars  = console | high (| pc)         (console)  SS_CAR_DETAIL
 //   shadow_distance = console | 1.5 | 2            (console)  SS_SHADOW_DISTANCE
@@ -21,6 +21,7 @@
 // Every address is a run-time VA of the Steam build 385319; the tweak registrations (push <address>) are compared
 // with the known bytes before anything is written, and on any mismatch this part does nothing.
 #include <windows.h>
+#include <d3d9.h>
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
@@ -71,26 +72,45 @@ uint32_t FromFloat(float f) { uint32_t v; memcpy(&v, &f, 4); return v; }
 // at least LINEAR gets MINFILTER ANISOTROPIC and MAXANISOTROPY = the device's maximum ([0xD64708]+0x620); the mag
 // filter stays LINEAR; at Low / Medium the sampler's own states. So 16 at High / Very High is the title's picture on
 // a 16x device, and Low / Medium get it too.
+//
+// Only a sampler whose bound texture is a 2D texture with more than one mip level is made anisotropic; at 2..16 a
+// sampler on any other texture (one level: render targets, the colour grade's cube, look-up and gradient textures;
+// volume and cube textures) is kept off anisotropic, also where the title asked for it. The test has to be on the
+// texture, not on the sampler's mip filter: the title sets a mip filter on samplers of one-level textures too, and
+// DXVK (2.7.1, BindSampler) turns on Vulkan anisotropy for any sampler with a mip filter and MINFILTER ANISOTROPIC.
+// AMD's hardware ignores anisotropy on a one-level texture (RADV sets radv_disable_aniso_single_level for DXVK, as
+// D3D drivers behave), NVIDIA's does not: there the grade's colour look-up was sampled along a stretched footprint
+// wherever the colour changes fast between pixels, which drew red contour lines over the whole picture (GitHub #1,
+// RTX 3070). Which texture a sampler has comes from slot 65 (SetTexture) of the same vtable.
 
 constexpr uintptr_t kRenderer = 0xD64708;  // renderer; the device is renderer+0x578 (as patch.cpp)
 constexpr uint32_t kRendererDevice = 0x578;
 constexpr int kPresentSlot = 17;
 constexpr int kSamplerSlot = 69;  // IDirect3DDevice9::SetSamplerState (0x114 / 4)
+constexpr int kSetTextureSlot = 65;  // IDirect3DDevice9::SetTexture (0x104 / 4)
 
 constexpr DWORD kMag = 5, kMin = 6, kMip = 7, kBias = 8, kMaxAniso = 10;  // D3DSAMP_* (kBias: MIPMAPLODBIAS, a float's bits)
 constexpr DWORD kNone = 0, kLinear = 2, kAnisotropic = 3;     // D3DTEXF_*
+constexpr DWORD kUnsent = 0xFFFFFFFFu;
 
 // 0 game (no hook at start; after a menu change with the hook in, the title's own states), 1 off, else the level.
 volatile int g_aniso = 0;
 
 using SetSamplerFn = long(__stdcall*)(void*, DWORD, DWORD, DWORD);
 SetSamplerFn g_sampler_orig = nullptr;
+using SetTextureFn = long(__stdcall*)(void*, DWORD, IDirect3DBaseTexture9*);
+SetTextureFn g_settex_orig = nullptr;
 uint32_t* g_sampler_vt = nullptr;
-volatile LONG g_sampler_calls = 0, g_sampler_promoted = 0;
+// Counters for the log, written by the render thread only (plain increments: no locked instruction per call), read by
+// the worker for its lines.
+volatile LONG g_sampler_calls = 0, g_sampler_promoted = 0, g_tex_mipped = 0, g_tex_other = 0;
+volatile LONG g_sent = 0, g_skipped = 0, g_tex_calls = 0;
 
-// What the title asked of each sampler (D3D9's defaults until it says). What was sent to the device is not cached:
-// a Reset puts every sampler state back to D3D9's defaults behind our back, so the two states that follow the others
-// (min filter, max anisotropy) are sent again with every state the title sets (the drivers drop a repeated value).
+// What the title asked of each sampler (D3D9's defaults until it says), and the min filter and max anisotropy this
+// hook last sent for it. The title's own state is always passed on; the two states that follow from the others (min
+// filter, max anisotropy) are sent with another state or a texture of another kind only when they differ from what was
+// last sent. A Reset or a state block can set samplers behind the hook's back, so what was sent is forgotten at every
+// present (ss_quality_present): a stale value lasts one frame at most, and only until the title sets that state itself.
 // The DLL's own drawing (the settings overlay, the anti-aliasing passes: ss_own_drawing) passes through untracked;
 // both put the device back with a state block afterwards, so the title's states here stay the device's.
 struct Sampler {
@@ -98,6 +118,8 @@ struct Sampler {
   DWORD bias = 0;        // the title's MIPMAPLODBIAS (float bits)
   bool min_known = false;
   bool biased = false;   // the device has the title's bias plus ours
+  bool mipped2d = false; // the bound texture is a 2D texture with more than one level (see the head comment)
+  DWORD sent_min = kUnsent, sent_aniso = kUnsent;  // what this hook last sent (kUnsent: not known)
 };
 Sampler g_samplers[21];  // pixel samplers 0..15, then D3DDMAPSAMPLER (256) and the vertex samplers 257..260
 
@@ -109,17 +131,21 @@ int SamplerIndex(DWORD s) {
 
 bool Filtered(DWORD f) { return f == kLinear || f == kAnisotropic; }
 // `lv` is g_aniso read once per call (the settings menu may change it in between).
-bool Promoted(const Sampler& s, int lv) { return lv > 1 && Filtered(s.min) && Filtered(s.mag) && s.mip != kNone; }
-DWORD EffMag(const Sampler& s, int lv) { return lv == 1 && s.mag == kAnisotropic ? kLinear : s.mag; }
+bool Promoted(const Sampler& s, int lv) {
+  return lv > 1 && s.mipped2d && Filtered(s.min) && Filtered(s.mag) && s.mip != kNone;
+}
+// Off, or a level with a texture that must not be filtered anisotropically: none at all.
+bool NoAniso(const Sampler& s, int lv) { return lv == 1 || (lv > 1 && !s.mipped2d); }
+DWORD EffMag(const Sampler& s, int lv) { return NoAniso(s, lv) && s.mag == kAnisotropic ? kLinear : s.mag; }
 DWORD EffMin(const Sampler& s, int lv) {
   if (lv == 0) return s.min;
-  if (lv == 1) return s.min == kAnisotropic ? kLinear : s.min;
-  return Promoted(s, lv) ? kAnisotropic : s.min;
+  if (Promoted(s, lv)) return kAnisotropic;
+  return NoAniso(s, lv) && s.min == kAnisotropic ? kLinear : s.min;
 }
 DWORD EffAniso(const Sampler& s, int lv) {
   DWORD a = s.aniso ? s.aniso : 1;
   if (lv == 0) return a;
-  if (lv == 1) return 1;
+  if (NoAniso(s, lv)) return 1;
   if (Promoted(s, lv)) return static_cast<DWORD>(lv);
   return a > static_cast<DWORD>(lv) ? static_cast<DWORD>(lv) : a;
 }
@@ -140,6 +166,19 @@ DWORD BiasFor(const Sampler& s, int i) {
   return g_scene_bias && i < 16 && s.mip != kNone ? FromFloat(AsFloat(s.bias) + g_lod_bias) : s.bias;
 }
 
+long Put(void* dev, DWORD sampler, DWORD type, DWORD value) {
+  ++g_sent;
+  return g_sampler_orig(dev, sampler, type, value);
+}
+// A state that follows from the others: sent only when it differs from what was last sent.
+void Follow(void* dev, DWORD sampler, DWORD type, DWORD value, DWORD& sent) {
+  if (sent == value) {
+    ++g_skipped;
+    return;
+  }
+  sent = SUCCEEDED(Put(dev, sampler, type, value)) ? value : kUnsent;
+}
+
 long __stdcall SetSamplerHook(void* dev, DWORD sampler, DWORD type, DWORD value) {
   const int i = SamplerIndex(sampler);
   if (i < 0 || !(type == kMag || type == kMin || type == kMip || type == kBias || type == kMaxAniso) || ss_own_drawing != 0)
@@ -149,7 +188,7 @@ long __stdcall SetSamplerHook(void* dev, DWORD sampler, DWORD type, DWORD value)
     s.bias = value;
     const DWORD b = BiasFor(s, i);
     s.biased = b != s.bias;
-    return g_sampler_orig(dev, sampler, kBias, b);
+    return Put(dev, sampler, kBias, b);
   }
   switch (type) {
     case kMag: s.mag = value; break;
@@ -161,21 +200,44 @@ long __stdcall SetSamplerHook(void* dev, DWORD sampler, DWORD type, DWORD value)
   const DWORD mn = EffMin(s, lv), an = EffAniso(s, lv);
   long hr;
   switch (type) {
-    case kMag: hr = g_sampler_orig(dev, sampler, kMag, EffMag(s, lv)); break;
-    case kMin: hr = g_sampler_orig(dev, sampler, kMin, mn); break;
-    case kMip: hr = g_sampler_orig(dev, sampler, kMip, value); break;
-    default: hr = g_sampler_orig(dev, sampler, kMaxAniso, an); break;
+    case kMag: hr = Put(dev, sampler, kMag, EffMag(s, lv)); break;
+    case kMin: hr = Put(dev, sampler, kMin, mn); s.sent_min = SUCCEEDED(hr) ? mn : kUnsent; break;
+    case kMip: hr = Put(dev, sampler, kMip, value); break;
+    default: hr = Put(dev, sampler, kMaxAniso, an); s.sent_aniso = SUCCEEDED(hr) ? an : kUnsent; break;
   }
-  // The other states decide the min filter and the anisotropy: they are sent with them (no cache, see Sampler).
-  if (type != kMin && s.min_known) g_sampler_orig(dev, sampler, kMin, mn);
-  if (type != kMaxAniso) g_sampler_orig(dev, sampler, kMaxAniso, an);
+  // The other states decide the min filter and the anisotropy: sent with them when they change (see Sampler).
+  if (type != kMin && s.min_known) Follow(dev, sampler, kMin, mn, s.sent_min);
+  if (type != kMaxAniso) Follow(dev, sampler, kMaxAniso, an, s.sent_aniso);
   if (type == kMip && (g_scene_bias || s.biased)) {  // the mip filter decides whether the bias applies
     const DWORD b = BiasFor(s, i);
     s.biased = b != s.bias;
-    g_sampler_orig(dev, sampler, kBias, b);
+    Put(dev, sampler, kBias, b);
   }
-  InterlockedIncrement(&g_sampler_calls);
-  if (type == kMin && mn != value) InterlockedIncrement(&g_sampler_promoted);
+  ++g_sampler_calls;
+  if (type == kMin && mn != value) ++g_sampler_promoted;
+  return hr;
+}
+
+// The title binds a texture: when that changes whether its sampler may be anisotropic, the filter states that follow
+// from it are sent again (the title may set the sampler's states before or after the texture; DXVK reads both at the
+// draw). The DLL's own drawing passes through untracked: it puts the title's textures back with a state block.
+long __stdcall SetTextureHook(void* dev, DWORD stage, IDirect3DBaseTexture9* tex) {
+  const long hr = g_settex_orig(dev, stage, tex);
+  ++g_tex_calls;
+  const int i = SamplerIndex(stage);
+  if (i < 0 || ss_own_drawing != 0 || FAILED(hr) || !g_sampler_orig) return hr;
+  // The kind is asked of the texture at every bind, not cached by pointer: the level streams textures out and in, and
+  // a new texture at a freed one's address may be of the other kind. Two cheap calls into d3d9.dll.
+  const bool m = tex && tex->GetType() == D3DRTYPE_TEXTURE && tex->GetLevelCount() > 1;
+  Sampler& s = g_samplers[i];
+  if (m == s.mipped2d) return hr;
+  ++(m ? g_tex_mipped : g_tex_other);
+  const int lv = g_aniso;
+  const DWORD mag = EffMag(s, lv);
+  s.mipped2d = m;
+  if (EffMag(s, lv) != mag) Put(dev, stage, kMag, EffMag(s, lv));
+  if (s.min_known) Follow(dev, stage, kMin, EffMin(s, lv), s.sent_min);
+  Follow(dev, stage, kMaxAniso, EffAniso(s, lv), s.sent_aniso);
   return hr;
 }
 
@@ -209,6 +271,16 @@ void InstallSamplerHook() {
   }
   if (g_sampler_vt && g_sampler_vt != vt) ss_log("[aniso] the device's vtable changed (%p -> %p): hooked again", g_sampler_vt, vt);
   for (Sampler& s : g_samplers) s = Sampler();
+  // SetTexture first: until it is in, no sampler counts as one on a mipped 2D texture (none is made anisotropic).
+  const uint32_t mine_tex = static_cast<uint32_t>(reinterpret_cast<uintptr_t>(&SetTextureHook));
+  if (vt[kSetTextureSlot] != mine_tex) {
+    const SetTextureFn prev = g_settex_orig;
+    g_settex_orig = reinterpret_cast<SetTextureFn>(vt[kSetTextureSlot]);
+    if (!ss_write_word(&vt[kSetTextureSlot], mine_tex)) {
+      ss_log("[aniso] cannot write the device vtable's SetTexture (error %lu); no anisotropic filtering", GetLastError());
+      g_settex_orig = prev;
+    }
+  }
   g_sampler_orig = reinterpret_cast<SetSamplerFn>(vt[kSamplerSlot]);
   if (!ss_write_word(&vt[kSamplerSlot], mine)) {
     ss_log("[aniso] cannot write the device vtable (error %lu); anisotropy left to the game", GetLastError());
@@ -219,7 +291,9 @@ void InstallSamplerHook() {
   char name[MAX_PATH] = "?";
   GetModuleFileNameA(owner, name, sizeof name);
   ss_log("[aniso] SetSamplerState hooked in %s (device %p, vtable %p); %s", name, reinterpret_cast<void*>(dev), vt,
-         g_aniso == 1 ? "no anisotropic filtering" : "every linear-filtered sampler with mips anisotropic");
+         g_aniso == 0   ? "the game's own filter states (hooked for TAA's texture LOD bias)"
+         : g_aniso == 1 ? "no anisotropic filtering"
+                        : "every linear-filtered sampler with mips on a mipped 2D texture anisotropic, none on other textures");
 }
 
 // The device's pixel samplers 0..15 to the bias the scene phase asks for.
@@ -242,11 +316,11 @@ float ParseLodBias(const std::string& v) {
 }
 
 int ParseAnisotropy(const std::string& v) {
-  if (v.empty()) return 16;
+  if (v.empty()) return 0;  // default: game (PC ORIGINAL)
   if (v == "game") return 0;
   if (v == "off") return 1;
   int n = atoi(v.c_str());
-  if (n < 1) return 16;
+  if (n < 1) return 0;
   if (n > 16) n = 16;
   return n;
 }
@@ -702,6 +776,10 @@ DWORD WINAPI QualityWorker(LPVOID) {
 
   DWORD hooked_at = 0;
   bool counted = false;
+  const std::string fl = ss_conf("frame_log");
+  const bool rate_log = !fl.empty() && !(fl == "0" || fl == "false" || fl == "no" || fl == "off");
+  DWORD rate_at = 0;
+  LONG r_calls = 0, r_sent = 0, r_skipped = 0, r_tex = 0, r_kind = 0;
   const bool hook = g_aniso != 0 || g_bias_hook;  // as at start: the settings menu may set game later, the hook stays (passing through)
   for (;;) {
     if (g_ntun) ApplyTunables();
@@ -710,7 +788,20 @@ DWORD WINAPI QualityWorker(LPVOID) {
       if (g_sampler_orig && !hooked_at) hooked_at = GetTickCount();
       if (hooked_at && !counted && GetTickCount() - hooked_at > 20000) {
         counted = true;
-        ss_log("[aniso] first 20 s: %ld sampler filter states set, %ld min filters changed", g_sampler_calls, g_sampler_promoted);
+        ss_log("[aniso] first 20 s: %ld sampler filter states set, %ld min filters changed; a sampler's texture became a mipped 2D "
+               "one %ld times, another kind (no anisotropy) %ld times", g_sampler_calls, g_sampler_promoted, g_tex_mipped, g_tex_other);
+      }
+      // frame_log: the hooks' traffic every 10 s, a second (beside the [frames] lines).
+      if (rate_log && hooked_at && GetTickCount() - rate_at >= 10000) {
+        const DWORD now = GetTickCount();
+        const LONG c = g_sampler_calls, se = g_sent, sk = g_skipped, t = g_tex_calls, k = g_tex_mipped + g_tex_other;
+        if (rate_at) {
+          const double sec = (now - rate_at) / 1000.0;
+          ss_log("[aniso] a second: %.0f filter states from the title, %.0f SetSamplerState calls sent to the device, %.0f "
+                 "re-sends skipped (unchanged), %.0f textures bound, %.0f texture kind changes",
+                 (c - r_calls) / sec, (se - r_sent) / sec, (sk - r_skipped) / sec, (t - r_tex) / sec, (k - r_kind) / sec);
+        }
+        rate_at = now; r_calls = c; r_sent = se; r_skipped = sk; r_tex = t; r_kind = k;
       }
     }
     Sleep(100);
@@ -744,6 +835,8 @@ void ss_quality_start() { CreateThread(nullptr, 0, QualityWorker, nullptr, 0, nu
 // patch.cpp's present hook (the game's thread, between two frames).
 void ss_quality_present() {
   if (g_props) PropsPresent();
+  // A Reset or a state block may have set samplers behind the hook's back: what was sent is not known any more.
+  for (Sampler& s : g_samplers) s.sent_min = s.sent_aniso = kUnsent;
 }
 
 // The settings menu (menu.cpp): anisotropy at once while SetSamplerState is hooked (it is only when the start value

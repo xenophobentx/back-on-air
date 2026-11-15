@@ -397,7 +397,7 @@ void RegisterBuiltins() {
                           {"0.5", "50%"}, {"0.6", "60%"}, {"0.75", "75%"}, {"1", "100%"}}, ss_postfx_apply),
            false);
   // Live only while quality.cpp's SetSamplerState hook is in (not game at start); else RESTART NEEDED.
-  Register(MenuChoiceRow("anisotropy", "TEXTURE FILTERING", MENU_PAGE_GRAPHICS, MENU_LIVE, "16",
+  Register(MenuChoiceRow("anisotropy", "TEXTURE FILTERING", MENU_PAGE_GRAPHICS, MENU_LIVE, "game",
                          {{"game", "PC ORIGINAL"}, {"off", "OFF"}, {"2", "2X"}, {"4", "4X"}, {"8", "8X"}, {"16", "16X"}}, ss_quality_apply),
            false);
   Register(MenuChoiceRow("draw_distance", "DRAW DISTANCE", MENU_PAGE_GRAPHICS, MENU_RESTART, "console",
