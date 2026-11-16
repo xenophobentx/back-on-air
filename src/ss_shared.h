@@ -50,6 +50,8 @@ float ss_lodfade_drawing(int* old);       // lodfade.cpp: the share of the maske
 void ss_quality_present();                // quality.cpp: from the present hook: the props' draw distance
 void ss_quality_scene_begin(void* device, bool jittered);  // quality.cpp: TAA's texture LOD bias from the update ...
 void ss_quality_scene_end(void* device);                   // ... until the scene/UI split (postfx.cpp)
+void ss_ppicon_start();                  // ppicon.cpp: the Power Play icons' size (GitHub #3)
+void ss_ppicon_present();                // ppicon.cpp: from the present hook: the icons' scales for the back buffer
 void ss_lodfade_present();                // lodfade.cpp: from the present hook, before the frame is shown
 void ss_aspect_after_update();            // aspect.cpp: widens the cameras the update just made
 void ss_postfx_after_update();            // postfx.cpp: after the update (and aspect's), TAA's camera jitter

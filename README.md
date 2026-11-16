@@ -366,6 +366,11 @@ but not the PC's name, its LAN address or the user name in a folder path (that o
 
 ## Release notes
 
+### 2026-11-16: 1.0.3
+
+* The Power Play icons over rival cars keep the Xbox 360 size at any resolution. Above 720p they grew too big
+  (3 times at 4K) and could cover the road.
+
 ### 2026-11-15: 1.0.2
 
 * HDR now works on NVIDIA graphics cards under Windows. The dxvk.conf workaround is no longer needed.

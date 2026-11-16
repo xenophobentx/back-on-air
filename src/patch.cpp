@@ -1008,6 +1008,7 @@ long __stdcall PresentHook(void* dev, const void* a, const void* b, void* c, con
   RegionsForget(false);  // the readable-region cache: the present phase checks again
   ss_quality_present();  // quality.cpp: the knock-over props' draw distance for the next frame
   ss_lodfade_present();  // lodfade.cpp: the frame's render is over, the scenery objects get their own meshes back
+  ss_ppicon_present();  // ppicon.cpp: the Power Play icons' scales for this back buffer (each race's HUD once)
   ss_glyphs_present(dev);  // glyphs.cpp: a button_prompts change re-writes the prompt textures
   ss_pipewarm_present(dev);  // pipewarm.cpp: pipeline_warmup's replay at the level load (before the overlay)
   ss_menu_present(dev);  // the settings overlay (menu.cpp): drawn over the finished picture while open
@@ -3506,6 +3507,7 @@ void ss_patch_start(HMODULE self) {
   ss_audio_start();
   ss_quality_start();
   ss_aspect_start();
+  ss_ppicon_start();
   ss_options_entry_start();
   ss_lodfade_start();
   ss_shadowsmooth_start();
