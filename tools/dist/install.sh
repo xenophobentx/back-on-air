@@ -175,7 +175,7 @@ if [ "$MODE" = uninstall ]; then
     if is_ours "$GAME/dinput8.dll"; then move_away dinput8.dll patch
     else say "  dinput8.dll is not the patch's; left alone"; fi
   fi
-  for f in splitsecond.conf splitsecond.conf.new splitsecond-patch.log splitsecond-patch.prev.log; do
+  for f in splitsecond.conf splitsecond.conf.new splitsecond-patch.log splitsecond-patch.prev.log splitsecond-patch.warned; do
     [ -f "$GAME/$f" ] && move_away "$f" patch
   done
   [ -d "$GAME/pipeline-warmup" ] && move_away pipeline-warmup patch

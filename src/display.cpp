@@ -58,6 +58,7 @@
 #include <cstring>
 #include <string>
 #include "menu.h"
+#include "ss_common.h"
 #include "ss_shared.h"
 
 namespace {
@@ -596,6 +597,7 @@ HRESULT WINAPI HookCreateDevice(IDirect3D9* d3d, UINT adapter, D3DDEVTYPE type, 
   }
   CopyBack(pp, mine);
   LogAdapter(d3d, adapter);  // after the create: the vendor's D3D9 driver module is loaded by then
+  ss_srccheck_modules("after CreateDevice");  // srccheck.cpp: overlays hook the device's creation
   const HWND win = mine.hDeviceWindow ? mine.hDeviceWindow : focus;
   ss_log("[display] CreateDevice adapter %u, %ux%u format %lu, %s (game asked %s), interval 0x%lx, window %p: 0x%08lx",
          adapter, mine.BackBufferWidth, mine.BackBufferHeight, static_cast<unsigned long>(mine.BackBufferFormat),

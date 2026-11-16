@@ -160,7 +160,7 @@ if ($Mode -eq 'uninstall') {
   if (Test-Path -LiteralPath $dx) {
     if (Test-OursDxvk $dx) { Move-Away 'dxvk' 'patch' } else { Say "  the dxvk folder is not the patch's; left alone" }
   }
-  foreach ($f in 'splitsecond.conf', 'splitsecond.conf.new', 'splitsecond-patch.log', 'splitsecond-patch.prev.log') {
+  foreach ($f in 'splitsecond.conf', 'splitsecond.conf.new', 'splitsecond-patch.log', 'splitsecond-patch.prev.log', 'splitsecond-patch.warned') {
     if (Test-Path -LiteralPath (P $GameDir $f)) { Move-Away $f 'patch' }
   }
   if (Test-Path -LiteralPath (P $GameDir 'pipeline-warmup') -PathType Container) { Move-Away 'pipeline-warmup' 'patch' }

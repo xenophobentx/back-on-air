@@ -366,6 +366,14 @@ but not the PC's name, its LAN address or the user name in a folder path (that o
 
 ## Release notes
 
+### 2026-11-15: 1.0.2
+
+* HDR now works on NVIDIA graphics cards under Windows. The dxvk.conf workaround is no longer needed.
+* The HDR calibration pattern now works on screens that tone map by themselves, such as OLEDs.
+* At start the patch checks that SplitSecond.exe is the untouched Steam version. If it is not, the patch turns
+  itself off and says so. It also warns about other mods in the game folder.
+* The log now starts first, so a start that fails still leaves a trace.
+
 ### 2026-11-15: 1.0.1
 
 * Fixed red contour lines over the whole picture on NVIDIA graphics cards when texture filtering was set above

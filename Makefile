@@ -5,7 +5,7 @@ HDRS = $(wildcard src/*.h) $(wildcard third_party/*/*.h) $(wildcard third_party/
 all: build/dinput8.dll
 build/dinput8.dll: $(SRCS) $(HDRS) src/proxy.def
 	mkdir -p build
-	$(CXX) $(CXXFLAGS) -Ithird_party -shared -o $@ $(SRCS) src/proxy.def -lwinmm -luuid -lws2_32
+	$(CXX) $(CXXFLAGS) -Ithird_party -shared -o $@ $(SRCS) src/proxy.def -lwinmm -luuid -lws2_32 -lbcrypt
 dist: build/dinput8.dll
 	sh tools/dist/make-dist.sh
 installtest:

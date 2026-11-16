@@ -70,6 +70,7 @@ void ss_hdr_menu_rows(void* device);      // from menu.cpp when the overlay open
 bool ss_hdr_active();                     // the output is HDR10 now (or forced by the test aid)
 void ss_hdr_calibrating(bool on);         // menu.cpp: the calibration screen is up (the output pass draws its patterns)
 void ss_hdr_levels(float* peak, float* paper, float* hud);  // the levels in use, in nits
+float ss_hdr_display_peak();              // the peak the display reports of itself, in nits (0: not known)
 bool ss_hdr_apply(const char* key, const char* value);      // a key's value, live (hdr, hdr_peak, hdr_paper_white, ...)
 bool ss_hdr_encoded(float* paper_white);  // testshot.cpp: the frame being presented holds PQ; the paper white it was made with
 bool ss_hdr_test_lost();                  // test aid (SS_HDR_TEST_RESET): patch.cpp's Present hook answers D3DERR_DEVICELOST

@@ -6,8 +6,9 @@
 //   * renderer = dxvk (the default): a 5-byte jump on the entry of Windows' d3d9!Direct3DCreate9 (system DLL memory,
 //     nothing of the game; the same kind of jump as online.cpp's on ws2_32) sends every call, the game's and this
 //     patch's own (display.cpp, dxvkwin.cpp), to Direct3DCreate9 of dxvk\d3d9.dll. That DLL is loaded by the first
-//     call (on the caller's thread, not in DllMain under the loader lock). If it cannot be loaded, the jump is taken
-//     out again and Windows' d3d9 answers that call and every later one.
+//     call (on the caller's thread, not in DllMain under the loader lock). If it cannot be loaded, or its Direct3DCreate9
+//     returns null (no Vulkan instance or adapter), the jump is taken out again and Windows' d3d9 answers that call
+//     and every later one.
 //   * renderer = native: nothing is changed: Windows' d3d9.
 //   * A d3d9.dll beside the exe (the older layout): the exe imports that one, and it is used as it is, whatever the
 //     key says (the dxvk folder is not used).
@@ -87,7 +88,24 @@ IDirect3D9* WINAPI RoutedCreate9(UINT sdk) {
     InterlockedExchange(&g_tried, 1);
   }
   LeaveCriticalSection(&g_cs);
-  if (g_create) return g_create(sdk);
+  if (CreateFn f = g_create) {
+    IDirect3D9* d = f(sdk);
+    ss_log("[renderer] DXVK Direct3DCreate9(%u) = %p", sdk, static_cast<void*>(d));
+    if (d) return d;
+    // Null (DXVK found no Vulkan instance or adapter): the game would quit. Windows' own d3d9 from here on, as when
+    // the DLL cannot be loaded.
+    static bool out = false;  // the jump is out again (set by the first thread here)
+    EnterCriticalSection(&g_cs);
+    if (g_create) {
+      out = Put5(g_entry, g_saved);
+      g_create = nullptr;
+      g_module = nullptr;
+      ss_log("[renderer] DXVK gave no IDirect3D9: Windows' own d3d9 is used%s", out ? "" : "; the jump could not be taken out");
+    }
+    const bool back = out;
+    LeaveCriticalSection(&g_cs);
+    if (!back) return nullptr;  // the jump is still in: the entry would come back here
+  }
   return reinterpret_cast<CreateFn>(g_entry)(sdk);  // the jump is out: Windows' own
 }
 

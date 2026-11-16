@@ -1171,17 +1171,22 @@ void LayoutCal(float W, float H) {
   AddQuad(0, 0, W, H, 0xFF000000);
   AddText(g_gfx.big, "HDR CALIBRATION", 0, 0.04f * H, W, 44 * u, mid | DT_CENTER, kWhite, false);
   const float x[2] = {0.06f * W, 0.54f * W}, w = 0.40f * W;
+  // A screen that tone maps by itself never clips, so the disc never goes: the way out is said here, with the peak
+  // the screen reports of itself where it is known.
+  char own[64] = "SET ITS RATED PEAK";
+  if (const float reported = ss_hdr_display_peak(); reported > 0.0f)
+    snprintf(own, sizeof own, "SET ITS RATED PEAK (IT REPORTS %d NITS)", static_cast<int>(reported + 0.5f));
   const char* const title[2] = {"PEAK PATTERN", "PAPER WHITE CARD"};
-  const char* const help[2] = {"RAISE PEAK BRIGHTNESS UNTIL THE DISC JUST DISAPPEARS",
-                               "SET IT SO THIS LOOKS LIKE A SHEET OF PAPER UNDER ROOM LIGHT"};
+  const char* const help[2][3] = {{"RAISE PEAK BRIGHTNESS UNTIL THE DISC JUST DISAPPEARS", "IF IT NEVER DOES, THE SCREEN TONE MAPS BY ITSELF:", own},
+                                  {"SET IT SO THIS LOOKS LIKE A SHEET OF PAPER UNDER ROOM LIGHT", "", ""}};
   const char* const name[2] = {"PEAK BRIGHTNESS", "GAME BRIGHTNESS"};
   for (int i = 0; i < 2; ++i) {
     const bool focus = g_cal_sel == i;
     AddText(g_gfx.body, title[i], x[i], 0.17f * H, w, 30 * u, mid | DT_CENTER, focus ? kOrange : kGrey, false);
-    AddText(g_gfx.small, help[i], x[i], 0.72f * H, w, 22 * u, mid | DT_CENTER, kGrey, false);
+    for (int l = 0; l < 3; ++l) AddText(g_gfx.small, help[i][l], x[i], 0.72f * H + l * 20 * u, w, 20 * u, mid | DT_CENTER, kGrey, false);
     char v[64];
     snprintf(v, sizeof v, focus ? "%s   <<  %d NITS  >>" : "%s   %d NITS", name[i], g_cal_value[i]);
-    AddText(g_gfx.body, v, x[i], 0.78f * H, w, 34 * u, mid | DT_CENTER, focus ? kWhite : kGrey, false);
+    AddText(g_gfx.body, v, x[i], 0.815f * H, w, 34 * u, mid | DT_CENTER, focus ? kWhite : kGrey, false);
   }
   AddText(g_gfx.small, g_used_pad ? "UP, DOWN: CHOOSE      LEFT, RIGHT: CHANGE      B: DONE" : "UP, DOWN: CHOOSE      LEFT, RIGHT: CHANGE      ESC: DONE", 0,
           0.90f * H, W, 22 * u, mid | DT_CENTER, kGrey, false);

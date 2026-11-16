@@ -65,7 +65,8 @@ HRESULT WINAPI ss_DllUnregisterServer() {
 BOOL WINAPI DllMain(HINSTANCE inst, DWORD reason, LPVOID) {
   if (reason == DLL_PROCESS_ATTACH) {
     DisableThreadLibraryCalls(inst);
-    ss_patch_start(inst);
+    ss_patch_start(inst);  // opens the log and runs the start-up check (srccheck.cpp)
+    if (!ss_exe_known()) return TRUE;  // not the Steam build: nothing that relies on its addresses is started
     ss_intro_start();
     ss_glyphs_start();   // before ss_display_start: it asks whether the device is wanted at its creation
     ss_hdr_start();      // before ss_display_start and ss_postfx_start: both ask it what it needs of them

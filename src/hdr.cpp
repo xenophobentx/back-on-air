@@ -394,15 +394,16 @@ static const float3 kLuma = float3(0.2126, 0.7152, 0.0722);
 static const float4 kPeakPanel = float4(0.06, 0.24, 0.46, 0.70);
 static const float4 kPaperPanel = float4(0.54, 0.24, 0.94, 0.70);
 bool InBox(float2 w, float4 box) { return w.x >= box.x && w.x < box.z && w.y >= box.y && w.y < box.w; }
-// The patterns, in units of 10000 nits; -1 outside them. Left: a disc at the peak setting on a surround at 10000
-// nits (what the display clips to its real peak). Right: a card at paper white beside one at 18 % of it.
+// The patterns, in units of 10000 nits; -1 outside them. Left: a small box at 10000 nits (the display shows it at
+// its real peak) with a disc at the peak setting in it, on black; the box is under 5 % of the screen, so an OLED's
+// brightness limiter leaves it alone. Right: a card at paper white beside one at 18 % of it.
 float Pattern(float2 w) {
   float paper = a.y, peak = a.x * a.y;
   float r = -1.0;
   if (InBox(w, kPeakPanel)) {
     float2 centre = float2(0.5 * (kPeakPanel.x + kPeakPanel.z), 0.5 * (kPeakPanel.y + kPeakPanel.w));
-    float2 d = (w - centre) * float2(win.x, 1.0);
-    r = length(d) < 0.17 ? peak : 1.0;
+    float2 d = (w - centre) * float2(win.x, 1.0);  // in screen heights
+    r = length(d) < 0.065 ? peak : (max(abs(d.x), abs(d.y)) < 0.13 ? 1.0 : 0.0);
   }
   if (InBox(w, kPaperPanel)) {
     float u = (w.x - kPaperPanel.x) / (kPaperPanel.z - kPaperPanel.x);
@@ -2517,9 +2518,10 @@ IHdrSwapchain* Extension(IDirect3DDevice9* d) {
 }
 
 float g_display_peak = 0.0f;  // what the swap chain says of the display (0: not known)
+float g_display_fall = 0.0f;  // its full frame level (0: not known)
 bool g_described = false, g_no_ext = false;
 bool g_cs_dirty = false;      // a Reset happened: colour space and metadata are set again
-float g_md_peak = 0, g_md_paper = 0;
+float g_md_peak = 0, g_md_fall = 0;  // the metadata last sent
 uint32_t g_next_try = 0;      // the frame at which HDR10 is asked for again
 int g_failures = 0;
 bool g_broken = false;        // the output pass failed again and again: HDR stays off for this run
@@ -2535,20 +2537,33 @@ void Levels(float* peak, float* paper, float* hud) {
   *hud = hw;
 }
 
+// The metadata's light levels: the display's own peak and full frame level where the swap chain told them, the
+// settings where it did not. A display that tone maps by the metadata compresses whatever is over its own peak in
+// it, and a value that followed the PEAK row moved its curve at every step of the calibration screen; told its own
+// numbers (what Windows sends it for every composed window) it has nothing to compress and shows the signal as it is.
+void MetadataLevels(float* peak, float* fall) {
+  float pk, paper, hud;
+  Levels(&pk, &paper, &hud);
+  *peak = g_display_peak > 0.0f ? g_display_peak : pk;
+  *fall = g_display_peak > 0.0f && g_display_fall > 0.0f ? g_display_fall : std::min(paper, *peak);
+}
+
 void SetMetadata(IHdrSwapchain* ext, bool always) {
-  float peak, paper, hud;
-  Levels(&peak, &paper, &hud);
-  if (!always && peak == g_md_peak && paper == g_md_paper) return;
+  float peak, fall;
+  MetadataLevels(&peak, &fall);
+  if (!always && peak == g_md_peak && fall == g_md_fall) return;
   HdrMetadata md = {};
   md.sType = 1000105000;
   md.red[0] = 0.708f, md.red[1] = 0.292f, md.green[0] = 0.170f, md.green[1] = 0.797f, md.blue[0] = 0.131f, md.blue[1] = 0.046f;
   md.white[0] = 0.3127f, md.white[1] = 0.3290f;
-  md.maxLuminance = peak, md.minLuminance = 0.0f, md.maxContentLightLevel = peak, md.maxFrameAverageLightLevel = paper;
+  md.maxLuminance = peak, md.minLuminance = 0.0f, md.maxContentLightLevel = peak, md.maxFrameAverageLightLevel = fall;
   const HRESULT hr = ext->SetHDRMetaData(&md);
-  if (peak != g_md_peak || paper != g_md_paper)
-    ss_log("[hdr] metadata: BT.2020, peak %.0f nits, paper white %.0f nits, HUD %.0f nits (0x%08lx)", peak, paper, hud, static_cast<unsigned long>(hr));
+  if (peak != g_md_peak || fall != g_md_fall)
+    ss_log("[hdr] metadata: BT.2020, max and MaxCLL %.0f nits, MaxFALL %.0f nits (%s) (0x%08lx)", peak, fall,
+           g_display_peak > 0.0f ? "the display's own numbers" : "the display's are not known: the peak and paper white settings",
+           static_cast<unsigned long>(hr));
   g_md_peak = peak;
-  g_md_paper = paper;
+  g_md_fall = fall;
 }
 
 void Describe(IDirect3DDevice9* d) {
@@ -2586,12 +2601,15 @@ void TryActivate(IDirect3DDevice9* d) {
   if (!ext) return;
   if (ext->CheckColorSpaceSupport(kCsHdr10)) {
     HdrOutputDesc od = {};
-    if (SUCCEEDED(ext->GetCurrentOutputDesc(&od)) && od.maxLuminance >= 200.0f && od.maxLuminance <= 10000.0f) g_display_peak = od.maxLuminance;
+    if (SUCCEEDED(ext->GetCurrentOutputDesc(&od)) && od.maxLuminance >= 200.0f && od.maxLuminance <= 10000.0f) {
+      g_display_peak = od.maxLuminance;
+      g_display_fall = od.maxFullFrameLuminance >= 50.0f && od.maxFullFrameLuminance <= od.maxLuminance ? od.maxFullFrameLuminance : 0.0f;
+    }
     const HRESULT hr = ext->SetColorSpace(kCsHdr10);
     if (SUCCEEDED(hr)) {
       g_active = true;
       g_cs_dirty = false;
-      g_md_peak = g_md_paper = 0;
+      g_md_peak = g_md_fall = 0;
       float peak, paper, hud;
       Levels(&peak, &paper, &hud);
       ss_log("[hdr] HDR10 on: swap chain colour space ST 2084 (0x%08lx); the display's peak %s%.0f nits; peak %.0f, paper white %.0f, HUD %.0f nits",
@@ -2818,9 +2836,9 @@ void Present(IDirect3DDevice9* d) {
     Deactivate(d, !on ? "the HDR row" : !ten ? "the back buffer is not 10-bit" : !ready && !g_r.failed ? "the passes' shaders are not made yet" : "the passes failed");
   if (!g_active && want_active && g_frame >= g_next_try) TryActivate(d);
   if (g_active) {
-    float peak, paper, hud;
-    Levels(&peak, &paper, &hud);
-    if (g_cs_dirty || peak != g_md_peak || paper != g_md_paper) {
+    float peak, fall;
+    MetadataLevels(&peak, &fall);
+    if (g_cs_dirty || peak != g_md_peak || fall != g_md_fall) {
       if (IHdrSwapchain* ext = Extension(d)) {
         if (g_cs_dirty) {  // after a Reset: DXVK keeps both; setting them again costs nothing
           const HRESULT hr = ext->SetColorSpace(kCsHdr10);
@@ -2971,6 +2989,39 @@ float Number(const char* env, const char* key, float fallback) {
   return end == v.c_str() ? fallback : f;
 }
 
+// NVIDIA under Windows: DXVK must be allowed exclusive full screen (dxvk.allowFse = True) or the driver shows nothing
+// of an HDR10 swap chain: with DXVK's default the picture froze on the last SDR frame, or stayed black from the start,
+// while every call answered success; with the key the picture moves (GitHub #2, RTX 5090). DXVK reads DXVK_CONFIG when
+// the Direct3D object is made, after this. The key does nothing under Wine / Proton and nothing for a window that
+// does not cover the screen. Left alone where the player set allowFse (DXVK_CONFIG, DXVK_CONFIG_FILE, or a dxvk.conf
+// in the game folder), and on other vendors' GPUs, where HDR works without it.
+void AllowFullScreenOnNvidia() {
+  const HMODULE nt = GetModuleHandleA("ntdll.dll");
+  if (nt && GetProcAddress(nt, "wine_get_version")) return;
+  bool nvidia = false;
+  DISPLAY_DEVICEA dd = {};
+  dd.cb = sizeof dd;
+  for (DWORD i = 0; !nvidia && EnumDisplayDevicesA(nullptr, i, &dd, 0); ++i) nvidia = strstr(dd.DeviceID, "VEN_10DE") != nullptr;
+  if (!nvidia) return;
+  char cur[2048] = "", file[MAX_PATH] = "";
+  if (GetEnvironmentVariableA("DXVK_CONFIG", cur, sizeof cur) >= sizeof cur) return;
+  bool set = strstr(cur, "allowFse") != nullptr;
+  const DWORD m = GetEnvironmentVariableA("DXVK_CONFIG_FILE", file, sizeof file);
+  for (const char* path : {m && m < sizeof file ? file : "", "dxvk.conf"}) {
+    FILE* f = *path && !set ? fopen(path, "r") : nullptr;
+    if (!f) continue;
+    for (char line[512]; !set && fgets(line, sizeof line, f);) set = line[strspn(line, " \t")] != '#' && strstr(line, "allowFse");
+    fclose(f);
+  }
+  if (set) {
+    ss_log("[hdr] NVIDIA on Windows: dxvk.allowFse is set by the player: kept");
+    return;
+  }
+  const std::string nv = std::string(cur) + (*cur ? ";" : "") + "dxvk.allowFse = True";
+  SetEnvironmentVariableA("DXVK_CONFIG", nv.c_str());
+  ss_log("[hdr] NVIDIA on Windows: DXVK_CONFIG = %s (the driver shows an HDR10 picture only with exclusive full screen allowed)", nv.c_str());
+}
+
 }  // namespace
 
 // ------------------------------------------------------------------------------------------------------ hook-ups
@@ -2988,6 +3039,7 @@ void ss_hdr_start() {
     return;
   }
   g_on = on ? 1 : 0;
+  AllowFullScreenOnNvidia();
   g_force = IsOn(Setting("SS_HDR_FORCE", "hdr_force"));
   g_peak = Number("SS_HDR_PEAK", "hdr_peak", 0.0f);
   g_paper = Number("SS_HDR_PAPER_WHITE", "hdr_paper_white", Handheld() ? 200.0f : 240.0f);
@@ -3166,6 +3218,7 @@ void ss_hdr_menu_rows(void* device) {
 bool ss_hdr_active() { return g_active || (g_run && g_force); }
 void ss_hdr_calibrating(bool on) { g_calibrating = on ? 1 : 0; }
 void ss_hdr_levels(float* peak, float* paper, float* hud) { Levels(peak, paper, hud); }
+float ss_hdr_display_peak() { return g_display_peak; }
 bool ss_hdr_apply(const char* key, const char* value) { return Apply(key, value); }
 
 // testshot.cpp: whether the back buffer of the frame being presented holds PQ, and the paper white it was made with.

@@ -27,6 +27,7 @@
 #include <string>
 #include "menu.h"
 #include "online_text.h"
+#include "ss_common.h"
 #include "ss_shared.h"
 
 #define THISCALL __attribute__((thiscall))
@@ -3472,16 +3473,28 @@ void ss_patch_start(HMODULE self) {
   GetModuleFileNameA(self, g_dir, MAX_PATH);
   char* slash = strrchr(g_dir, '\\');
   if (slash) slash[1] = 0;
-  // No splitsecond.conf and no SS_* switch: the DLL only forwards DirectInput. No log file is created or
-  // truncated and no thread is started.
-  g_active = ss_conf_present() || AnySsEnv();
-  if (!g_active) return;
+  // The log first, before anything that can fail: even a silent exit of the game leaves the start-up check behind.
   std::string lp = std::string(g_dir) + "splitsecond-patch.log";
   // The last run's log is kept as splitsecond-patch.prev.log: after a crash and a restart it is still there.
   const std::string prev = std::string(g_dir) + "splitsecond-patch.prev.log";
   MoveFileExA(lp.c_str(), prev.c_str(), MOVEFILE_REPLACE_EXISTING);
   g_log = fopen(lp.c_str(), "w");
   Log("Back on Air, a PC patch for Split/Second");  // the patch's name, the log's first line
+  // No splitsecond.conf and no SS_* switch: the patch is off; only the start-up check is logged (no message box).
+  const bool conf = ss_conf_present();
+  g_active = conf || AnySsEnv();
+  // srccheck.cpp: the exe (not the Steam build: nothing below is started, nor anything in proxy.cpp), other mods.
+  // srccheck_test = exe: a test aid, the exe is taken as unknown.
+  const bool known = ss_srccheck_run(self, conf, g_active, conf && ConfValue("srccheck_test") == "exe");
+  if (!g_active) {
+    Log("no splitsecond.conf beside the DLL and no SS_* switch: the patch is off");
+    return;
+  }
+  if (!known) {
+    Log("the exe is not the known Steam build: nothing is patched or hooked; the DLL only forwards DirectInput");
+    g_active = false;
+    return;
+  }
   ss_overlay_start();    // first: the import slots are taken before the game opens its archives
   ss_saves_start(self);  // done before the game reads its profile
   ConfEnvironment();

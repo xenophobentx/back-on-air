@@ -1140,6 +1140,7 @@ void StartOnce() {
 // proxy.cpp calls this after the real DirectInput8Create succeeded; *inout is the real interface and is
 // replaced with the wrapper. Returns S_OK when wrapped, S_FALSE when left alone.
 long ss_pad_wrap_directinput(const void* riid, void** inout) {
+  if (!ss_exe_known()) return S_FALSE;  // srccheck.cpp: not the Steam build, the patch is off
   StartOnce();
   if (!g_cfg.on || !inout || !*inout) return S_FALSE;
   if (!IsEqualIID(*static_cast<const IID*>(riid), IID_IDirectInput8A)) return S_FALSE;
