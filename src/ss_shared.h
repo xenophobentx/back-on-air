@@ -40,6 +40,8 @@ void ss_options_entry_start();            // options_entry.cpp: the PC SETTINGS 
 void ss_lodfade_start();                  // lodfade.cpp: LOD smoothing (its own thread when wanted)
 void ss_shadowsmooth_start();             // shadowsmooth.cpp: shadow smoothing (its own thread when wanted)
 void ss_autopilot_start();                // autopilot.cpp: autopilot (test aid): the game's AI drives player one, lap / finish log
+void ss_streampool_start();              // streampool.cpp: stream_pool / stream_pool_log, the sector streaming pool's size (SSPC-51)
+void ss_streampool_present();            // streampool.cpp: from the present hook: the pool limit at a level load, the 480-node hold
 void ss_slipstream_start();               // slipstream.cpp: slipstream_fix, the draft streaks' texture and definition (SSPC-31)
 void* ss_shadowsmooth_original(void* ps);  // shadowsmooth.cpp: the game's shader behind one of our variants, else ps
 void* ss_lodfade_original(void* ps);       // lodfade.cpp: the game's shader behind one of its dither variants, else ps
@@ -52,6 +54,10 @@ void ss_quality_scene_begin(void* device, bool jittered);  // quality.cpp: TAA's
 void ss_quality_scene_end(void* device);                   // ... until the scene/UI split (postfx.cpp)
 void ss_ppicon_start();                  // ppicon.cpp: the Power Play icons' size (GitHub #3)
 void ss_ppicon_present();                // ppicon.cpp: from the present hook: the icons' scales for the back buffer
+void ss_keyrepeat_start();               // keyrepeat.cpp: menu_key_repeat, a held arrow key repeats in the menus (SSPC-47)
+void ss_keyrepeat_present();             // keyrepeat.cpp: from the present hook: the arrow keys on the menu repeat rows
+void ss_keyrepeat_keys(unsigned char* state);  // keyrepeat.cpp: from the game's GetKeyboardState: arrows mirrored
+bool ss_game_keyboard_hook();            // menu.cpp: the game's GetKeyboardState import taken (once); true when ours
 void ss_lodfade_present();                // lodfade.cpp: from the present hook, before the frame is shown
 void ss_aspect_after_update();            // aspect.cpp: widens the cameras the update just made
 void ss_postfx_after_update();            // postfx.cpp: after the update (and aspect's), TAA's camera jitter
@@ -86,6 +92,10 @@ bool ss_glyphs_wanted();                  // display.cpp hooks CreateDevice for 
 void ss_glyphs_device(void* device);      // from display.cpp's CreateDevice wrap, before the game has the device
 void ss_glyphs_present(void* device);     // from patch.cpp's Present hook
 void ss_glyphs_before_reset();            // from display.cpp's Reset wrap: the default-pool textures it holds are let go
+// shadowres.cpp: shadow_resolution (SSPC-50), the sun shadow atlas at 2x / 4x through the device's vtable.
+bool ss_shadowres_wanted();               // display.cpp hooks CreateDevice for it
+void ss_shadowres_device(void* device);   // from display.cpp's CreateDevice wrap, before the game has the device
+void ss_shadowres_after_reset();          // from display.cpp's Reset wrap, after a Reset that worked
 // pipewarm.cpp: pipeline_warmup (SSPC-35): DXVK's graphics pipelines of a level made at its load screen.
 bool ss_pipewarm_wanted();                // display.cpp hooks CreateDevice for it
 void ss_pipewarm_start();                 // patch.cpp at start, after env.*: DXVK_CONFIG numCompilerThreads with pre-compile on

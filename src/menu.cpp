@@ -197,6 +197,7 @@ const KeyInfo kKeys[] = {
      "Keeps the road and walls sharp at a distance. 16x costs almost nothing."},
     {"draw_distance", LEVEL_PLAYER, MENU_PAGE_GRAPHICS, "DRAW DISTANCE", "How far away scenery and other cars are drawn."},
     {"shadow_distance", LEVEL_PLAYER, MENU_PAGE_GRAPHICS, "SHADOW DISTANCE", "How far away shadows are drawn."},
+    {"shadow_resolution", LEVEL_PLAYER, MENU_PAGE_GRAPHICS, "SHADOW DETAIL", "Sharper shadows. 4096 is for desktop graphics cards."},
     {"shadow_smoothing", LEVEL_PLAYER, MENU_PAGE_GRAPHICS, "SHADOW BLENDING",
      "Hides the line in front of the car where sharp shadows turn into soft ones."},
     {"lod_smoothing", LEVEL_PLAYER, MENU_PAGE_GRAPHICS, "POP-IN FADE", "Fades scenery in and out instead of letting it pop."},
@@ -252,6 +253,8 @@ const KeyInfo kKeys[] = {
      "How soft the edges of sun shadows are. Softest can show stripes on slopes."},
     {"slipstream_fix", LEVEL_ADVANCED, MENU_PAGE_GRAPHICS, "SLIPSTREAM EFFECT",
      "The white streaks at the car's front while you draft another car. Missing in the PC release."},
+    {"stream_pool", LEVEL_ADVANCED, MENU_PAGE_GRAPHICS, "STREAMING MEMORY",
+     "More room for streamed track detail, so far objects swap to low detail less often. Applies from the next race."},
     {"audio_voice_dsp", LEVEL_ADVANCED, MENU_PAGE_AUDIO, "3D SOUND POSITIONS", "Places sounds around you as the console does. Leave on."},
     {"audio_speaker_fix", LEVEL_ADVANCED, MENU_PAGE_AUDIO, "SURROUND LEVELS FIX",
      "Stops menu and HUD sounds playing at full level from every speaker. Leave on."},
@@ -405,6 +408,9 @@ void RegisterBuiltins() {
            false);
   Register(MenuChoiceRow("shadow_distance", "SHADOW DISTANCE", MENU_PAGE_GRAPHICS, MENU_RESTART, "console",
                          {{"console", "NORMAL"}, {"1.5", "FAR (1.5X)"}, {"2", "VERY FAR (2X)"}}, nullptr),
+           false);
+  Register(MenuChoiceRow("shadow_resolution", "SHADOW DETAIL", MENU_PAGE_GRAPHICS, MENU_RESTART, "console",
+                         {{"console", "NORMAL (1024)"}, {"2048", "HIGH (2048)"}, {"4096", "ULTRA (4096)"}}, nullptr),
            false);
   // Live only while shadowsmooth.cpp's SetPixelShader hook is in (on or high at start); else RESTART NEEDED.
   Register(MenuChoiceRow("shadow_smoothing", "SHADOW BLENDING", MENU_PAGE_GRAPHICS, MENU_LIVE, "high",
@@ -1572,37 +1578,40 @@ GetKeyboardStateFn g_game_gks = nullptr;
 BOOL WINAPI QuietGetKeyboardState(PBYTE state) {
   const BOOL r = g_game_gks(state);
   if (r && state && ss_menu_capturing()) memset(state, 0, 256);
+  if (r && state) ss_keyrepeat_keys(state);  // keyrepeat.cpp: the arrows mirrored onto the menu repeat rows' keys
   return r;
 }
 
-void HookGameKeyboard() {
-  if (reinterpret_cast<uintptr_t>(GetModuleHandleA(nullptr)) != 0x400000) return;
+}  // namespace
+
+// Also asked for by keyrepeat.cpp (its rows read keys that only this hook sets). Once; true when the import is ours.
+bool ss_game_keyboard_hook() {
+  static int state = 0;  // 0 not tried, 1 ours, 2 failed
+  if (state) return state == 1;
+  state = 2;
+  if (reinterpret_cast<uintptr_t>(GetModuleHandleA(nullptr)) != 0x400000) return false;
   HMODULE u = GetModuleHandleA("user32.dll");
   const uintptr_t real = u ? reinterpret_cast<uintptr_t>(GetProcAddress(u, "GetKeyboardState")) : 0;
   const uintptr_t cur = *reinterpret_cast<const volatile uintptr_t*>(kIatGetKeyboardState);
   if (!real || cur != real) {
     ss_log("[menu] the game's GetKeyboardState import holds %08lx, not user32's %08lx; its keyboard is not quieted while the menu is open",
            static_cast<unsigned long>(cur), static_cast<unsigned long>(real));
-    return;
+    return false;
   }
   g_game_gks = reinterpret_cast<GetKeyboardStateFn>(real);
   if (!ss_write_word(reinterpret_cast<void*>(kIatGetKeyboardState), reinterpret_cast<uintptr_t>(&QuietGetKeyboardState))) {
     ss_log("[menu] cannot write the game's GetKeyboardState import; its keyboard is not quieted while the menu is open");
-    return;
+    return false;
   }
   ss_log("[menu] the game's keyboard (GetKeyboardState import %p) reads nothing pressed while the menu is open",
          reinterpret_cast<void*>(kIatGetKeyboardState));
+  state = 1;
+  return true;
 }
-
-}  // namespace
 
 void ss_menu_present(void* device) {
   if (g_enabled != 1 && !ss_menu_wanted()) return;
-  static bool kb_tried = false;
-  if (!kb_tried) {
-    kb_tried = true;
-    HookGameKeyboard();
-  }
+  ss_game_keyboard_hook();
   TestCalibration(device);
   if (!g_open) {
     if (g_latch && !AnythingHeld()) g_latch = false;

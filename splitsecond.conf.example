@@ -38,6 +38,9 @@ pad_translate_dinput = true
 pad_foreground_only = false
 # Log button changes to splitsecond-patch.log (the first 400). Default false.
 pad_log = false
+# Keyboard: a held arrow key keeps moving in the menus (car selection, lists): once at once, again after 0.4 s, then
+# 10 a second, the game's own repeat for the stick. false: one step per press, as the game ships. (SS_MENU_KEY_REPEAT)
+menu_key_repeat = true
 # reverb: the PC release ships its event files with the authored per-environment reverb presets
 # (hall, large hall, tank, overhead, hangar, take-down camera, loading screen, default ambient) overwritten by
 # one generic small room. true = give the game the authored parameters back (the console release's), by
@@ -266,6 +269,13 @@ draw_distance = console
 # LOW / MEDIUM the level's own shadow numbers are scaled the same way. (SS_SHADOW_DISTANCE)
 shadow_distance = console
 
+# The sun shadow's texels (this patch's own): console = the game's three 1024x1024 cascades in a 1024x3072 atlas (as
+# on the Xbox 360); 2048 / 4096 = the atlas is made 2 / 4 times as wide and high and the cascades drawn at that size.
+# Sharper shadow shapes (fences, poles, wheels, the stair steps along edges go away); the soft edge keeps its width
+# (shadow_softness). GPU memory +72 MiB at 2048, +360 MiB at 4096; 4096 is for a desktop GPU, not a Steam Deck.
+# Split screen keeps 1024. Needs a restart. (SS_SHADOW_RESOLUTION)
+shadow_resolution = console
+
 # The sun shadow's hand-over between its cascades (the port's SHADOW SMOOTHING): off = the game's hard line where the
 # sharp near cascade turns into the coarser next one (25 to 35 m ahead of the camera, so it runs along in front of the
 # car and shadows change their look as it crosses them); on / high = a dithered band of 25 % / 40 % of each split
@@ -311,6 +321,11 @@ opponent_cars = console
 # files) and sets the one misplaced byte that makes the streaks move with the car. Files are not changed. Read at
 # start-up. (SS_SLIPSTREAM_FIX)
 slipstream_fix = true
+# Memory for streamed track detail (the sector streaming pool): game = the game's 57 MB (the Xbox 360's size, full on
+# PC); a number in MB (the overlay offers 70) gives far objects more room before they drop to low detail. The game has
+# 512 slots for streamed items: once 480 are in use the size is held at what is then used for the rest of that
+# level. Takes effect at the next level load. stream_pool_log = 1 logs the pool once a second.
+stream_pool = game
 # Window mode. fullscreen: the game as it ships (exclusive fullscreen; nothing is hooked). borderless: a window
 # without frame over the whole monitor (alt-tab is instant, no device reset); windowed: a window with a title bar,
 # the size of the game's resolution. In both the picture is the game's resolution scaled to the window, so set the

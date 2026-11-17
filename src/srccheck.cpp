@@ -27,6 +27,13 @@ namespace {
 // The exe every address of this patch belongs to: SplitSecond.exe of the Steam depot, build 385319.
 constexpr ULONGLONG kSteamExeSize = 23359488;
 constexpr char kSteamExeSha[] = "82b3b577b40b7703ac7bd95d40a67521f43ad27ef84c3fa14bc4c089235c4453";
+// The other two untouched Steam language builds (depots 297867 and 297866), told apart by size and PE time stamp.
+// They stay unsupported (the patch is off, as for any other exe); only the message says how to get the supported one.
+const char* OtherSteamLanguage(ULONGLONG size, unsigned long stamp) {
+  if (size == 23392256 && stamp == 0x4BE3EA74) return "Russian";
+  if (size == 23379968 && stamp == 0x4BE13CC6) return "Polish";
+  return nullptr;
+}
 // DXVK 2.7.1's 32-bit d3d9.dll, as the package ships it in dxvk\ (tools/dist/make-dist.sh, DXVK_D3D9_SHA).
 constexpr ULONGLONG kDxvkSize = 4493326;
 constexpr char kDxvkSha[] = "00ecd422b3b12e9d3b309785f3f19431405389d80eb4a37018ebc63e2d87d900";
@@ -235,6 +242,10 @@ bool ss_srccheck_run(void* self_module, bool conf_present, bool boxes, bool test
          static_cast<unsigned long>(nt->FileHeader.TimeDateStamp), ms,
          g_known ? "known Steam build 385319" : "NOT the Steam build this patch supports; the patch is off",
          test_unknown ? " (srccheck_test = exe)" : "");
+  const char* lang = g_known || !opened ? nullptr : OtherSteamLanguage(size, nt->FileHeader.TimeDateStamp);
+  if (lang)
+    ss_log("[srccheck] this is the %s Steam version of the exe; the supported one is the English / German Steam exe: in "
+           "Steam set the game's language to English (Properties > General > Language) and let Steam update it", lang);
 
   // ---- the patch's own files
   if (!conf_present) ss_log("[srccheck] splitsecond.conf is not beside the DLL");
@@ -295,7 +306,14 @@ bool ss_srccheck_run(void* self_module, bool conf_present, bool boxes, bool test
 
   // ---- the boxes (not when the patch is switched off by having no splitsecond.conf)
   if (!boxes) return g_known;
-  if (!g_known) {
+  if (!g_known && lang) {
+    Box(std::string("Back on Air: this is the ") + lang + " Steam version of SplitSecond.exe.\n"
+        "Back on Air supports only the English / German Steam exe.\n\n"
+        "In Steam, right-click Split/Second > Properties > General > Language, choose English, "
+        "let Steam download the update, and the patch will work.\n\n"
+        "The patch is off for now. The game runs without it.\n"
+        "Details are in splitsecond-patch.log.");
+  } else if (!g_known) {
     char t[160];
     snprintf(t, sizeof t, "%llu bytes, SHA-256 %s...", size, Short(sha).c_str());
     Box("Back on Air: " + Utf8(exe_name) +

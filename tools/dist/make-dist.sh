@@ -28,7 +28,7 @@ if [ ! -f "$TGZ" ] || [ "$(sha256 "$TGZ")" != "$DXVK_TGZ_SHA" ]; then
 fi
 [ "$(sha256 "$TGZ")" = "$DXVK_TGZ_SHA" ] || { echo "dxvk tarball: SHA-256 mismatch"; exit 1; }
 
-RELEASE=1.0.3   # Back on Air release number, in the zip name
+RELEASE=1.0.4   # Back on Air release number, in the zip name
 VER="$(date +%Y%m%d)-$(git rev-parse --short HEAD)"
 git diff --quiet HEAD -- src third_party Makefile splitsecond.conf.example tools/dist records 2>/dev/null || VER="$VER-dirty"
 NAME="back-on-air-$RELEASE-$VER"

@@ -423,6 +423,7 @@ HRESULT WINAPI HookReset(IDirect3DDevice9* dev, D3DPRESENT_PARAMETERS* pp) {
   if (SUCCEEDED(hr)) {
     ss_frame_interval(mine.PresentationInterval);
     ss_hdr_after_reset(dev);
+    ss_shadowres_after_reset();
   }
   static int n = 0;
   ++n;
@@ -609,6 +610,7 @@ HRESULT WINAPI HookCreateDevice(IDirect3D9* d3d, UINT adapter, D3DDEVTYPE type, 
     ss_pipewarm_device(dev);  // pipewarm.cpp: directly above DXVK's draw slots, before every other device hook
     ss_hdr_device_created(dev, static_cast<unsigned>(mine.BackBufferFormat));  // hdr.cpp's two slots, before the game has the device
     ss_glyphs_device(dev);  // glyphs.cpp: the texture hooks, before the game loads its prompt textures
+    ss_shadowres_device(dev);  // shadowres.cpp: shadow_resolution, before the game makes its shadow atlas
     g_hwnd = win;
     if (g_mode != WM_FULLSCREEN) LayOutWindow(win, mine.BackBufferWidth, mine.BackBufferHeight);
     Subclass(focus ? focus : win);
@@ -779,7 +781,8 @@ void ss_display_start() {
   const bool vsync = ss_frame_vsync();
   const bool fastest = ss_frame_immediate();
   if (g_mode == WM_FULLSCREEN && g_pause_on_focus_loss && !g_track && g_bb_format == D3DFMT_UNKNOWN && !vsync && !fastest &&
-      g_game_vsync == GV_GAME && !ss_glyphs_wanted() && !ss_pipewarm_wanted())
+      g_game_vsync == GV_GAME && !ss_glyphs_wanted() && !ss_pipewarm_wanted() &&
+      !ss_shadowres_wanted())
     return;  // nothing at all (glyphs.cpp wants the device as it is made: the prompt textures load right after)
   InitializeCriticalSection(&g_lock);
   if (g_extra_w) ss_log("[display] extra_resolution %ux%u (a mode added to the game's list)", g_extra_w, g_extra_h);

@@ -21,6 +21,20 @@
 //    (from the Present hook); xbox360 puts the game's own pixels back.
 //  * playstation uses the game's own PS3 frames; keyboard the game's own key caps (the bound key's name). Neither
 //    swaps a texture.
+//  * The Instant Replay banner (UI/HUD/Hud.gfx, mc_replayIcon.mc_replayiconAll.mc_buttonPrompt and its shadow
+//    mc_buttonPromptShadow) shows on PC only the text "Instant Replay" (txt_buttonPrompt): the console's LB picture is
+//    in the file but no frame draws it. Hud::cReplayIconElement (ctor 0x570460) shows the banner through the same
+//    Invoke slot with the method name "CameraIconShow" (0xBD27AC; 0x45AB30 -> 0x536A70 -> vtable +0x48). After that
+//    call the wrapper puts the bound input in front of both texts with the movie's own GetVariable / SetVariable
+//    (vtable 0xC41CF4, +0x30 / +0x2C): "LB  Instant Replay" (pad: the set's name for the button), "[P]  Instant
+//    Replay" (keyboard). The binding is the live one: the input manager *(0xD646C8) keeps one entry per device
+//    (count +0xCF6C, array +0xCF70, 0x584 bytes each; {type, index} at +0x564, type 1 = keyboard; in use: byte
+//    +0x56C) of 0x45 rows {action, key, pad control, pad kind, hat angle}; Instant Replay is action 51 (the Controls
+//    screen's 12th row, row 38). The device is the menus' player's (*(*(0xD64E08) + 0x64), {type, index}) when it
+//    is of the sort wanted, else the first of that sort. Pad kind 0 = button (index of the Xbox 360 pad layout, the
+//    virtual pad's), kind 2 = the hat (control >= 128, angle in hundredths of a degree), 3 = none. Defaults: LB on an
+//    Xbox 360 pad, P (arrow keys layout) or R (WASD layout) [0xCFABF8 / 0xCFB06C, row 38]. An axis binding or none:
+//    the game's own text.
 //
 // auto: the last input decides keyboard or pad (a pad press or stick push -> pad; a key while the pad rests ->
 // keyboard; at start the pad when one is connected). For a pad, the kind of the first pad: Valve (28DE, the Steam
@@ -31,7 +45,8 @@
 // environment or SS_HANDHELD=1. The pads come from the Windows device list (raw input HID game pads), looked at every
 // two seconds, with the game's own DirectInput list as the fallback.
 //
-// Nothing of the game's code is written: one .rdata vtable slot, and slots of d3d9.dll's vtables.
+// Nothing of the game's code is written: one .rdata vtable slot, slots of d3d9.dll's vtables, and the banner's text
+// through the movie's own calls.
 
 #include <windows.h>
 #include <d3d9.h>
@@ -121,8 +136,131 @@ uint32_t g_frame_swaps = 0;
 
 using InvokeFn = uint32_t(__attribute__((thiscall)) *)(void*, const char*, void*, const void*, uint32_t);
 
+// ------------------------------------------------------------------------- the Instant Replay banner's label
+
+constexpr uintptr_t kCameraIconShow = 0xBD27AC;  // "CameraIconShow", the replay element's method name
+constexpr uint32_t kMovieVt = 0xC41CF4;          // GFxMovieRoot: +0x2C SetVariable, +0x30 GetVariable, +0x48 Invoke
+constexpr uint32_t kSetVarOrig = 0x991010, kGetVarOrig = 0x98A970;
+constexpr uintptr_t kInputManager = 0xD646C8;
+constexpr uintptr_t kFrontEnd = 0xD64E08;
+constexpr uint32_t kReplayAction = 51;
+bool g_replay_ok = false;  // the banner's data and the movie vtable are the known build's (CheckFrameSites)
+
+using SetVarFn = uint32_t(__attribute__((thiscall)) *)(void*, const char*, const uint32_t*, int);
+using GetVarFn = uint32_t(__attribute__((thiscall)) *)(void*, uint32_t*, const char*);
+const char* const kReplayFields[2] = {"mc_replayIcon.mc_replayiconAll.mc_buttonPrompt.txt_buttonPrompt.text",
+                                      "mc_replayIcon.mc_replayiconAll.mc_buttonPromptShadow.txt_buttonPrompt.text"};
+std::string g_replay_orig[2], g_replay_shown[2], g_replay_logged = "-";
+
+// The device the menus' player uses ({type, index}; type 0 pad, 1 keyboard): the front end's input block
+// (0x4D60F0, object *(0xD64E08)) passes *(+0x64) to every action query.
+bool ActiveDevice(uint32_t* type, uint32_t* index) {
+  const uintptr_t fe = *reinterpret_cast<const uintptr_t*>(kFrontEnd);
+  if (!fe || IsBadReadPtr(reinterpret_cast<const void*>(fe + 0x64), 4)) return false;
+  const uint32_t* d = *reinterpret_cast<const uint32_t* const*>(fe + 0x64);
+  if (!d || IsBadReadPtr(d, 8) || d[0] > 1) return false;
+  *type = d[0];
+  *index = d[1];
+  return true;
+}
+
+// The Instant Replay row {key, control, kind, angle} of the player's device when it is of that sort (keyboard or
+// pad), else of the first device in use of that sort.
+bool ReplayBinding(bool keyboard, uint32_t out[4]) {
+  uint32_t type = 0, index = 0;
+  const bool exact = ActiveDevice(&type, &index) && (type == 1) == keyboard;
+  const uintptr_t mgr = *reinterpret_cast<const uintptr_t*>(kInputManager);
+  if (!mgr || IsBadReadPtr(reinterpret_cast<const void*>(mgr + 0xCF6C), 8)) return false;
+  const uint32_t count = *reinterpret_cast<const uint32_t*>(mgr + 0xCF6C);
+  const uintptr_t arr = *reinterpret_cast<const uintptr_t*>(mgr + 0xCF70);
+  if (!arr || !count || count > 16 || IsBadReadPtr(reinterpret_cast<const void*>(arr), count * 0x584)) return false;
+  for (uint32_t i = 0; i < count; ++i) {
+    const uint8_t* e = reinterpret_cast<const uint8_t*>(arr + i * 0x584);
+    if (!e[0x56C] || (*reinterpret_cast<const uint32_t*>(e + 0x564) == 1) != keyboard) continue;
+    if (exact && *reinterpret_cast<const uint32_t*>(e + 0x568) != index) continue;
+    for (int r = 0; r < 0x45; ++r) {
+      const uint32_t* row = reinterpret_cast<const uint32_t*>(e + r * 0x14);
+      if (row[0] != kReplayAction) continue;
+      memcpy(out, row + 1, 16);
+      return keyboard ? out[0] != 0 : out[2] == 0 || out[2] == 2;
+    }
+  }
+  return false;
+}
+
+std::string KeyName(uint32_t vk) {
+  UINT sc = MapVirtualKeyA(vk, 0);  // MAPVK_VK_TO_VSC
+  switch (vk) {
+    case VK_LEFT: case VK_RIGHT: case VK_UP: case VK_DOWN: case VK_INSERT: case VK_DELETE: case VK_HOME: case VK_END:
+    case VK_PRIOR: case VK_NEXT: case VK_RCONTROL: case VK_RMENU: case VK_DIVIDE: case VK_NUMLOCK:
+      sc |= 0x100;
+  }
+  char buf[48] = {};
+  if (sc && GetKeyNameTextA(static_cast<LONG>(sc << 16), buf, sizeof buf) > 0) return buf;
+  if ((vk >= '0' && vk <= '9') || (vk >= 'A' && vk <= 'Z')) return std::string(1, static_cast<char>(vk));
+  return "";
+}
+
+// What goes in front of the banner's text for the set in force ("" = the game's own text).
+std::string ReplayLabel(Set set) {
+  uint32_t b[4];
+  if (set == kKeyboard) {
+    if (!ReplayBinding(true, b)) return "";
+    const std::string k = KeyName(b[0]);
+    return k.empty() ? "" : "[" + k + "]";
+  }
+  if (!ReplayBinding(false, b)) return "";
+  if (b[2] == 2) {  // the hat
+    static const char* const dir[4] = {"Up", "Right", "Down", "Left"};
+    return b[3] % 9000 || b[3] >= 36000 ? "" : std::string("D-pad ") + dir[b[3] / 9000];
+  }
+  // Buttons of the virtual pad (an Xbox 360 pad): A B X Y LB RB Back Start LS RS.
+  static const char* const names[5][10] = {
+      {"A", "B", "X", "Y", "LB", "RB", "Back", "Start", "LS", "RS"},                              // xbox360
+      {"A", "B", "X", "Y", "LB", "RB", "View", "Menu", "LS", "RS"},                               // xbox
+      {"Cross", "Circle", "Square", "Triangle", "L1", "R1", "Share", "Options", "L3", "R3"},      // playstation
+      {"B", "A", "Y", "X", "L", "R", "-", "+", "LS", "RS"},                                       // nintendo (by position)
+      {"A", "B", "X", "Y", "L1", "R1", "View", "Menu", "L3", "R3"},                               // steam
+  };
+  const int s = set - kXbox360;
+  return s >= 0 && s < 5 && b[1] < 10 ? names[s][b[1]] : "";
+}
+
+// After the game's CameraIconShow: the bound input in front of both texts. A text that is still ours is not
+// written again (the call may come every frame while the banner is up).
+void LabelReplayBanner(void* movie) {
+  const uint32_t* vt = *static_cast<const uint32_t* const*>(movie);
+  if (reinterpret_cast<uintptr_t>(vt) != kMovieVt || vt[0x2C / 4] != kSetVarOrig || vt[0x30 / 4] != kGetVarOrig) return;
+  const SetVarFn setv = reinterpret_cast<SetVarFn>(vt[0x2C / 4]);
+  const GetVarFn getv = reinterpret_cast<GetVarFn>(vt[0x30 / 4]);
+  const Set set = static_cast<Set>(g_effective);
+  const std::string label = ReplayLabel(set);
+  for (int i = 0; i < 2; ++i) {
+    uint32_t v[4] = {};
+    if (!(getv(movie, v, kReplayFields[i]) & 0xff) || v[0] != 4 || !v[2] || IsBadReadPtr(reinterpret_cast<const void*>(v[2]), 1)) continue;
+    char cur[160] = {};
+    lstrcpynA(cur, reinterpret_cast<const char*>(v[2]), sizeof cur);
+    if (cur != g_replay_shown[i]) g_replay_orig[i] = cur;  // the movie's own text (a new banner or a new movie)
+    const std::string want = label.empty() ? g_replay_orig[i] : label + "  " + g_replay_orig[i];
+    g_replay_shown[i] = want;
+    if (want == cur) continue;
+    const uint32_t val[4] = {4, 0, static_cast<uint32_t>(reinterpret_cast<uintptr_t>(want.c_str())), 0};
+    setv(movie, kReplayFields[i], val, 0);
+  }
+  const std::string note = label + "|" + kSetNames[set];
+  if (note != g_replay_logged) {
+    g_replay_logged = note;
+    ss_log("[glyphs] Instant Replay banner: '%s' (%s)", g_replay_shown[0].c_str(), kSetNames[set]);
+  }
+}
+
 uint32_t __attribute__((thiscall)) InvokeHook(void* movie, const char* path, void* result, const void* args, uint32_t n) {
   const InvokeFn orig = reinterpret_cast<InvokeFn>(kInvokeOrig);
+  if (reinterpret_cast<uintptr_t>(path) == kCameraIconShow && g_replay_ok && movie) {
+    const uint32_t r = orig(movie, path, result, args, n);
+    if (r & 0xff) LabelReplayBanner(movie);
+    return r;
+  }
   const Set set = static_cast<Set>(g_effective);
   if (set != kKeyboard && n == 1 && args) {
     const uint32_t* v = static_cast<const uint32_t*>(args);
@@ -155,11 +293,19 @@ bool CheckFrameSites() {
   if (ok && slot != kInvokeOrig && slot != mine) ok = false;
   g_frames_checked = true;
   g_frames_ok = ok;
+  const uint32_t* mvt = reinterpret_cast<const uint32_t*>(kMovieVt);
+  g_replay_ok = ok && !IsBadReadPtr(reinterpret_cast<const void*>(kCameraIconShow), 15) &&
+                memcmp(reinterpret_cast<const void*>(kCameraIconShow), "CameraIconShow", 15) == 0 &&
+                mvt[0x2C / 4] == kSetVarOrig && mvt[0x30 / 4] == kGetVarOrig && kMovieVt + 0x48 == kInvokeSlot &&
+                !IsBadReadPtr(reinterpret_cast<const void*>(kInputManager), 4) &&
+                !memcmp(reinterpret_cast<const void*>(0x4D6124), "\x8B\x46\x64", 3) &&     // mov eax, [esi+0x64]
+                !memcmp(reinterpret_cast<const void*>(0x4D6166), "\x8B\x0D\xC8\x46\xD6\x00", 6);  // mov ecx, [0xD646C8]
+  if (ok && !g_replay_ok) ss_log("[glyphs] the Instant Replay banner's data is not the known build; its text is left as the game's");
   if (!ok) ss_log("[glyphs] the prompt bar's data in the image is not the known build; its icons are left as the game draws them");
   return ok;
 }
 
-// Points the movie's Invoke slot at the wrapper (once, the first time a pad set is in force).
+// Points the movie's Invoke slot at the wrapper (once; with the keyboard set too, for the replay banner's key).
 void InstallFrameHook() {
   if (g_frames_hooked || !CheckFrameSites()) return;
   uint32_t* slot = reinterpret_cast<uint32_t*>(kInvokeSlot);
@@ -702,7 +848,7 @@ void ss_glyphs_present(void* device) {
     g_late_checked = true;
     HookTextures(dev, "late (the prompt textures loaded before keep the game's pictures until they are loaded again)");
   }
-  if (static_cast<Set>(g_effective) != kKeyboard) InstallFrameHook();
+  InstallFrameHook();
   static DWORD last_sweep = 0;
   const DWORD now = GetTickCount();
   if (now - last_sweep > 5000) {

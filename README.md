@@ -200,12 +200,14 @@ The overlay also has CALIBRATE HDR, a test screen for these values.
 | `anisotropy` | `game` | Texture filtering: `game` (PC original), `off`, 2-16. |
 | `draw_distance` | `console` | Scenery detail distance: `console`, `1.5`, `2`. |
 | `shadow_distance` | `console` | How far sun shadows reach: `console`, `1.5`, `2`. |
+| `shadow_resolution` | `console` | Sun shadow detail: `console` (1024), `2048`, `4096` (desktop GPUs). Restart. |
 | `shadow_smoothing` | `high` | Hides the hard line where shadow detail changes: `off`, `on`, `high`. |
 | `shadow_softness` | `console` | Shadow edge width: `0.75`, `console`, `1.25`, `1.5`. |
 | `lod_smoothing` | `on` | Objects fade in instead of popping in: `off`, `on`, `high`. |
 | `deband` | `on` | Removes visible steps in dark skies, fog and glow. |
 | `opponent_cars` | `console` | Opponent car detail: `pc` (as shipped), `console` (Xbox 360), `high`. |
 | `slipstream_fix` | `true` | The Xbox 360's draft streaks at the front of the car. |
+| `stream_pool` | `game` | Memory for streamed track detail: `game` (57 MB, as the PC release and the Xbox 360) or `70` (MB). More room means far objects drop to low detail less often. Held back by itself when the game's 512 slots run short. From the next race. |
 | `shader_cache` | `true` | Keeps the patch's compiled shaders in `shader-cache`, so the next start is faster. |
 | `pipeline_warmup` | `auto` | Pre-compile (see below): `auto` / `on`, `off`. |
 
@@ -236,7 +238,8 @@ The overlay also has CALIBRATE HDR, a test screen for these values.
 | `pad_hotplug` | `true` | A pad connected after the start works. |
 | `pad_translate_dinput` | `true` | Older pads (DirectInput only: PlayStation, Nintendo, generic) work as Xbox pads. |
 | `pad_foreground_only` | `false` | `true` = ignore pads while another window is in front. |
-| `button_prompts` | `auto` | Button icons: `auto` (the device you used last), `xbox360`, `xbox`, `playstation`, `nintendo`, `steam`, `keyboard`. |
+| `menu_key_repeat` | `true` | A held arrow key keeps moving in the menus. `false` = one step per press. |
+| `button_prompts` | `auto` | Button icons: `auto` (the device you used last), `xbox360`, `xbox`, `playstation`, `nintendo`, `steam`, `keyboard`. The Instant Replay banner also shows the button or key bound to it (Options > Controls). |
 
 ### Game
 
@@ -339,6 +342,9 @@ stalls of 100 ms or more, the worst 1.4 s. With pre-compile, none went over 70 m
 * Online is experimental. It uses one replacement server (`online_server`). Races are tested on one home network
   only, private games with invitations do not work, and a public race needs 3 players. See
   [Online](#online-experimental).
+* Only the Steam exe that the English, German, French, Italian and Spanish versions share is supported. The Russian
+  and Polish Steam versions have their own exe: the patch stays off and a message says so. To use the patch, in
+  Steam right-click Split/Second > Properties > General > Language, choose English and let Steam update the game.
 
 ## Troubleshooting
 
@@ -365,6 +371,19 @@ Linux) and which `fps` setting you use. For stutter, also set `frame_log = true`
 but not the PC's name, its LAN address or the user name in a folder path (that one reads `<user>`).
 
 ## Release notes
+
+### 2026-11-17: 1.0.4
+
+* A held arrow key now keeps moving in the menus (car selection, lists), as a held stick does. A tap still moves
+  one step. Races are not affected. To turn it off, set `menu_key_repeat = false`.
+* The Instant Replay banner shows the button or key that starts the replay, for example "LB  Instant Replay"
+  (L1 on PlayStation pads and the Steam Deck, "[P]" on the keyboard).
+* New setting SHADOW DETAIL (`shadow_resolution = 2048` or `4096`) for sharper sun shadows. The default stays the
+  Xbox 360 size. 4096 is for desktop graphics cards. A restart is needed.
+* New setting ADVANCED > STREAMING MEMORY (`stream_pool = 70`): LARGER gives the track streamer 70 MB instead of 57,
+  so far objects swap to low detail less often. Off by default (GAME, 57 MB).
+* On the Russian or Polish Steam version of the game the start-up message now says how to get the supported exe
+  (set the game's language to English in Steam). The patch still stays off on those two.
 
 ### 2026-11-16: 1.0.3
 
