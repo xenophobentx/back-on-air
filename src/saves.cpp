@@ -176,43 +176,42 @@ int Keep() {
   return static_cast<int>(std::max(0L, std::min(static_cast<long>(kMaxKeep), n)));
 }
 
-void Run() {
-  const int keep = Keep();
-  if (keep == 0) {
-    ss_log("[saves] save_backups = 0: off, no backup");
-    return;
-  }
-  // The folder of this DLL (the game's folder), wide.
+// <the folder of this DLL>\save-backups\ (empty: not known).
+std::wstring BackupRoot() {
   std::wstring root = g_self;
   const size_t slash = root.find_last_of(L'\\');
-  if (slash == std::wstring::npos) {
-    ss_log("[saves] the DLL's folder is not known: no backup");
-    return;
-  }
+  if (!g_self[0] || slash == std::wstring::npos) return L"";
   root.resize(slash + 1);
-  root += L"save-backups\\";
+  return root + L"save-backups\\";
+}
 
-  // Documents (shell32 loaded here, on this thread, not in DllMain).
+// The game's save folder (empty: Documents not known, logged). shell32 is loaded here, never in DllMain.
+std::wstring SaveFolder() {
   HMODULE shell = LoadLibraryW(L"shell32.dll");
   using GetFolderFn = HRESULT(WINAPI*)(HWND, int, HANDLE, DWORD, LPWSTR);
   GetFolderFn get_folder = shell ? reinterpret_cast<GetFolderFn>(GetProcAddress(shell, "SHGetFolderPathW")) : nullptr;
   wchar_t docs[MAX_PATH] = L"";
   if (!get_folder || FAILED(get_folder(nullptr, CSIDL_PERSONAL, nullptr, 0, docs)) || !docs[0]) {
     ss_log("[saves] the Documents folder is not known: no backup");
-    return;
+    return L"";
   }
-  const std::wstring src = std::wstring(docs) + kSaveSub;
+  return std::wstring(docs) + kSaveSub;
+}
+
+enum ReadResult { READ_OK, READ_NONE, READ_FAILED };
+
+// The save folder's files (not steam_autocloud.vdf), sorted by name. READ_NONE: no save folder or no files yet.
+ReadResult ReadSave(const std::wstring& src, std::vector<SaveFile>* files) {
+  files->clear();
   const DWORD attr = GetFileAttributesW(src.c_str());
   if (attr == INVALID_FILE_ATTRIBUTES || !(attr & FILE_ATTRIBUTE_DIRECTORY)) {
     ss_log("[saves] no save folder yet (%s): nothing to back up", Utf8(src).c_str());
-    return;
+    return READ_NONE;
   }
-
-  std::vector<SaveFile> files;
   size_t total = 0;
   for (const std::wstring& n : FilesIn(src)) {
     if (!_wcsicmp(n.c_str(), L"steam_autocloud.vdf")) continue;
-    if (files.size() >= kMaxFiles) {
+    if (files->size() >= kMaxFiles) {
       ss_log("[saves] more than %u files in the save folder: the rest are not copied", static_cast<unsigned>(kMaxFiles));
       break;
     }
@@ -226,15 +225,60 @@ void Run() {
     total += f.bytes.size();
     if (total > kMaxTotalBytes) {
       ss_log("[saves] the save folder holds more than %u bytes: no backup", static_cast<unsigned>(kMaxTotalBytes));
-      return;
+      return READ_FAILED;
     }
-    files.push_back(std::move(f));
+    files->push_back(std::move(f));
   }
-  if (files.empty()) {
+  if (files->empty()) {
     ss_log("[saves] the save folder %s has no files: nothing to back up", Utf8(src).c_str());
+    return READ_NONE;
+  }
+  std::sort(files->begin(), files->end(), [](const SaveFile& a, const SaveFile& b) { return SameNameLess(a.name, b.name); });
+  return READ_OK;
+}
+
+// A new folder root + name holding the files; on any failure nothing is left behind (logged).
+bool WriteBackup(const std::wstring& root, const std::wstring& name, const std::vector<SaveFile>& files) {
+  const std::wstring dst = root + name + L"\\";
+  CreateDirectoryW(root.c_str(), nullptr);
+  if (!CreateDirectoryW(dst.c_str(), nullptr)) {
+    ss_log("[saves] could not make %s (error %lu): no backup", Utf8(dst).c_str(), GetLastError());
+    return false;
+  }
+  for (const SaveFile& f : files) {
+    if (!WriteAll(dst + f.name, f)) {
+      const DWORD err = GetLastError();
+      RemoveBackup(dst);  // a partial backup is not left as the newest one
+      ss_log("[saves] could not write %s%s (error %lu): no backup", Utf8(dst).c_str(), Utf8(f.name).c_str(), err);
+      return false;
+    }
+  }
+  return true;
+}
+
+std::wstring Stamp() {
+  SYSTEMTIME t;
+  GetLocalTime(&t);
+  wchar_t name[32];
+  swprintf(name, 32, L"%04u-%02u-%02u_%02u%02u%02u", t.wYear, t.wMonth, t.wDay, t.wHour, t.wMinute, t.wSecond);
+  return name;
+}
+
+void Run() {
+  const int keep = Keep();
+  if (keep == 0) {
+    ss_log("[saves] save_backups = 0: off, no backup");
     return;
   }
-  std::sort(files.begin(), files.end(), [](const SaveFile& a, const SaveFile& b) { return SameNameLess(a.name, b.name); });
+  const std::wstring root = BackupRoot();
+  if (root.empty()) {
+    ss_log("[saves] the DLL's folder is not known: no backup");
+    return;
+  }
+  const std::wstring src = SaveFolder();
+  if (src.empty()) return;
+  std::vector<SaveFile> files;
+  if (ReadSave(src, &files) != READ_OK) return;
 
   std::vector<std::wstring> existing = Backups(root);
   if (!existing.empty() && Identical(root + existing.back() + L"\\", files)) {
@@ -243,28 +287,34 @@ void Run() {
            static_cast<unsigned>(files.size()), Utf8(root).c_str(), Utf8(existing.back()).c_str(), keep, removed);
     return;
   }
-
-  SYSTEMTIME t;
-  GetLocalTime(&t);
-  wchar_t name[32];
-  swprintf(name, 32, L"%04u-%02u-%02u_%02u%02u%02u", t.wYear, t.wMonth, t.wDay, t.wHour, t.wMinute, t.wSecond);
-  const std::wstring dst = root + name + L"\\";
-  CreateDirectoryW(root.c_str(), nullptr);
-  if (!CreateDirectoryW(dst.c_str(), nullptr)) {
-    ss_log("[saves] could not make %s (error %lu): no backup", Utf8(dst).c_str(), GetLastError());
-    return;
-  }
-  for (const SaveFile& f : files) {
-    if (!WriteAll(dst + f.name, f)) {
-      const DWORD err = GetLastError();
-      RemoveBackup(dst);  // a partial backup is not left as the newest one
-      ss_log("[saves] could not write %s%s (error %lu): no backup", Utf8(dst).c_str(), Utf8(f.name).c_str(), err);
-      return;
-    }
-  }
+  const std::wstring name = Stamp();
+  if (!WriteBackup(root, name, files)) return;
   const int removed = Prune(root, keep);
-  ss_log("[saves] backed up %u files to %s (keeping %d; %d old removed)", static_cast<unsigned>(files.size()),
-         Utf8(dst).c_str(), keep, removed);
+  ss_log("[saves] backed up %u files to %s%s\\ (keeping %d; %d old removed)", static_cast<unsigned>(files.size()),
+         Utf8(root).c_str(), Utf8(name).c_str(), keep, removed);
+}
+
+// The newest folder under root named <prefix>YYYY-MM-DD_HHMMSS (empty: none).
+std::wstring NewestKept(const std::wstring& root, const std::wstring& prefix) {
+  std::wstring best;
+  WIN32_FIND_DATAW fd;
+  HANDLE h = FindFirstFileW((root + prefix + L"*").c_str(), &fd);
+  if (h == INVALID_HANDLE_VALUE) return best;
+  int n = 0;
+  do {
+    if ((fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) && !(fd.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) &&
+        !_wcsnicmp(fd.cFileName, prefix.c_str(), prefix.size()) && IsOurName(fd.cFileName + prefix.size()) &&
+        wcscmp(fd.cFileName, best.c_str()) > 0)
+      best = fd.cFileName;
+  } while (FindNextFileW(h, &fd) && ++n < 1000);
+  FindClose(h);
+  return best;
+}
+
+std::wstring Wide(const char* s) {
+  std::wstring w;
+  for (; s && *s; ++s) w += static_cast<wchar_t>(static_cast<unsigned char>(*s));  // our prefixes are ASCII
+  return w;
 }
 
 DWORD WINAPI Thread(void*) {
@@ -287,5 +337,56 @@ void ss_saves_start(void* self) {
   if (h) {
     SetThreadPriority(h, THREAD_PRIORITY_ABOVE_NORMAL);
     CloseHandle(h);
+  }
+}
+
+// extras.cpp: a backup kept for good, made before a switch that may change the save goes on (any thread but
+// DllMain: file reads and writes of a few hundred KB). The folder is save-backups\<prefix>YYYY-MM-DD_HHMMSS\; the
+// prefix keeps it out of save_backups' pruning (only exact YYYY-MM-DD_HHMMSS folders are ever deleted), and
+// save_backups = 0 does not stop it. Returns SAVES_KEPT_MADE, SAVES_KEPT_SAME (the newest <prefix> folder already
+// holds the same bytes: nothing new made), SAVES_KEPT_NO_SAVE (no save yet: nothing to protect) or SAVES_KEPT_FAILED.
+// *where: the folder (UTF-8), for the log and the overlay.
+int ss_saves_backup_kept(const char* prefix, std::string* where) {
+  try {
+    const std::wstring root = BackupRoot();
+    if (root.empty()) {
+      ss_log("[saves] the DLL's folder is not known: no backup");
+      return SAVES_KEPT_FAILED;
+    }
+    const std::wstring src = SaveFolder();
+    if (src.empty()) return SAVES_KEPT_FAILED;
+    std::vector<SaveFile> files;
+    const ReadResult rr = ReadSave(src, &files);
+    if (rr == READ_NONE) return SAVES_KEPT_NO_SAVE;
+    if (rr != READ_OK) return SAVES_KEPT_FAILED;
+    const std::wstring pre = Wide(prefix);
+    const std::wstring last = NewestKept(root, pre);
+    if (!last.empty() && Identical(root + last + L"\\", files)) {
+      if (where) *where = Utf8(root + last);
+      return SAVES_KEPT_SAME;
+    }
+    const std::wstring name = pre + Stamp();
+    if (!WriteBackup(root, name, files)) return SAVES_KEPT_FAILED;
+    if (where) *where = Utf8(root + name);
+    return SAVES_KEPT_MADE;
+  } catch (...) {
+    ss_log("[saves] failed (out of memory?): no backup");
+    return SAVES_KEPT_FAILED;
+  }
+}
+
+// extras.cpp: whether the save folder still holds the bytes of the newest save-backups\<prefix>... folder: 1 the
+// same, 0 changed (the game wrote its save since), -1 not known (no such folder, no save, a read failed).
+int ss_saves_same_as_kept(const char* prefix) {
+  try {
+    const std::wstring root = BackupRoot();
+    const std::wstring last = root.empty() ? L"" : NewestKept(root, Wide(prefix));
+    if (last.empty()) return -1;
+    const std::wstring src = SaveFolder();
+    std::vector<SaveFile> files;
+    if (src.empty() || ReadSave(src, &files) != READ_OK) return -1;
+    return Identical(root + last + L"\\", files) ? 1 : 0;
+  } catch (...) {
+    return -1;
   }
 }

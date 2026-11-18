@@ -164,7 +164,7 @@ comment. A missing key uses its default. The file in the zip has a comment for e
 | `extra_resolution` | (none) | Borderless / windowed only: one more size in the game's resolution list, e.g. `2560x1080`. |
 | `renderer` | `dxvk` | Windows only. `dxvk` = DXVK from the `dxvk` folder (120 fps, HDR). `native` = Windows' own Direct3D 9 (see Known limits). |
 | `pause_on_focus_loss` | `true` | `false` = the game keeps running and playing sound when another window is in front. |
-| `aspect` | `auto` | `auto` widens the picture on a screen wider than 16:9 (more at the sides) and keeps the HUD undistorted. `16:9` = as the game ships. Or a shape like `21:9`. |
+| `aspect` | `auto` | `auto` widens the picture on a screen wider than 16:9 (more at the sides) and keeps the HUD undistorted. On such a screen it also keeps the player name tags in shape, turns off the black bars above and below the race intros, and puts each player's HUD in his own half in split screen. `16:9` = as the game ships. Or a shape like `21:9`. |
 | `hud_width` | `16:9` | The HUD and menus on a wide screen: `16:9`, `21:9`, `full` (stretched, as the game ships), `letterbox`. |
 | `fov` | `100` | Field of view in percent of the game's (50-150). |
 | `slow_half_steps` | `true` | Crash and takedown slow motion at 60 different pictures a second (`false`: 30). |
@@ -174,7 +174,8 @@ comment. A missing key uses its default. The file in the zip has a comment for e
 ### HDR
 
 HDR needs DXVK (Windows with `renderer = dxvk`, or Proton) and a screen in HDR mode. On the Steam Deck OLED: Game
-Mode with HDR on. Without HDR the picture is the normal one.
+Mode with HDR on. Without HDR the picture is the normal one. HDR works only with `renderer = dxvk`: with
+`renderer = native` (Windows' own Direct3D 9) the overlay's HDR page shows only a note.
 
 | Key | Default | What it does |
 |---|---|---|
@@ -189,6 +190,10 @@ Mode with HDR on. Without HDR the picture is the normal one.
 
 The overlay also has CALIBRATE HDR, a test screen for these values.
 
+HDR looks grey, dark or wrong: look at the `[summary]` lines in `splitsecond-patch.log` (they come a second after the
+first frame and after every HDR switch). They show Windows HDR, the monitor, the window, what DXVK made, and a
+`verdict` line. Attach the whole log when you report it.
+
 ### Graphics
 
 | Key | Default | What it does |
@@ -198,13 +203,19 @@ The overlay also has CALIBRATE HDR, a test screen for these values.
 | `taa_lod_bias` | `-0.5` | With TAA: slightly sharper textures (-2 to 0). |
 | `sharpen` | `0` | Sharpening: 0, 0.25, 0.5, 0.75, 1. |
 | `anisotropy` | `game` | Texture filtering: `game` (PC original), `off`, 2-16. |
-| `draw_distance` | `console` | Scenery detail distance: `console`, `1.5`, `2`. |
+| `draw_distance` | `console` | Scenery detail distance: `console`, `1.5`, `2`. Above `console` smoke and sparks also thin out later. |
+| `visibility_lists` | `game` | `off` (BY DISTANCE): things hidden behind buildings are drawn too, so less pops in when you turn a corner. Costs frame time and streaming memory; keep `game` on the Steam Deck. Restart. |
 | `shadow_distance` | `console` | How far sun shadows reach: `console`, `1.5`, `2`. |
 | `shadow_resolution` | `console` | Sun shadow detail: `console` (1024), `2048`, `4096` (desktop GPUs). Restart. |
 | `shadow_smoothing` | `high` | Hides the hard line where shadow detail changes: `off`, `on`, `high`. |
 | `shadow_softness` | `console` | Shadow edge width: `0.75`, `console`, `1.25`, `1.5`. |
 | `lod_smoothing` | `on` | Objects fade in instead of popping in: `off`, `on`, `high`. |
 | `deband` | `on` | Removes visible steps in dark skies, fog and glow. |
+| `motion_blur` | `console` | Speed blur: `console` (as long at 60 and 120 fps as at 30, the look the game was made for), `game` (PC original: half as long at 60, a quarter at 120), `off`. Only at the game's QUALITY High or Very High. |
+| `motion_blur_quality` | `high` (Steam Deck: `low`) | How the speed blur is drawn: `high` and `low` (the patch's own blur shader with a fine noise between the samples: smooth streaks instead of repeated copies, other cars do not smear into the background; `high` 8 to 24 samples, `low` 6 to 12; at QUALITY Very High `high` acts as `low`), `game` (the game's own shader). Changes at once. |
+| `vignette` | `game` | The darker picture corners: `game` (on), `off`. |
+| `screen_gradient` | `game` | The light band across the top of the picture: `game` (on), `off`. |
+| `lens_flare` | `game` | Sun and light flares: `game` (on), `off`. |
 | `opponent_cars` | `console` | Opponent car detail: `pc` (as shipped), `console` (Xbox 360), `high`. |
 | `slipstream_fix` | `true` | The Xbox 360's draft streaks at the front of the car. |
 | `stream_pool` | `game` | Memory for streamed track detail: `game` (57 MB, as the PC release and the Xbox 360) or `70` (MB). More room means far objects drop to low detail less often. Held back by itself when the game's 512 slots run short. From the next race. |
@@ -238,6 +249,7 @@ The overlay also has CALIBRATE HDR, a test screen for these values.
 | `pad_hotplug` | `true` | A pad connected after the start works. |
 | `pad_translate_dinput` | `true` | Older pads (DirectInput only: PlayStation, Nintendo, generic) work as Xbox pads. |
 | `pad_foreground_only` | `false` | `true` = ignore pads while another window is in front. |
+| `pad_split_triggers` | `true` | Throttle (RT) and brake (LT) work at the same time, so you can brake or drift on the gas. `false` = the stock Xbox 360 behaviour: both triggers share one axis and cancel out when both are held. Read at start. |
 | `menu_key_repeat` | `true` | A held arrow key keeps moving in the menus. `false` = one step per press. |
 | `button_prompts` | `auto` | Button icons: `auto` (the device you used last), `xbox360`, `xbox`, `playstation`, `nintendo`, `steam`, `keyboard`. The Instant Replay banner also shows the button or key bound to it (Options > Controls). |
 
@@ -245,11 +257,38 @@ The overlay also has CALIBRATE HDR, a test screen for these values.
 
 | Key | Default | What it does |
 |---|---|---|
-| `skip_intro` | `true` | Skips the intro movies (title screen in about 14 s instead of 75). |
+| `skip_intro` | `true` | Skips the intro movies (title screen in about 14 s instead of 75). Needs `pad_support = true`: the skip presses A on the virtual pad, so with the controller layer off the movies play. |
 | `boot_to_menu` | as `skip_intro` | Passes Press Start for you: straight to the main menu. |
 | `save_backups` | `10` | At every start, a copy of your saves goes into `save-backups\<date>` in the game folder. Keeps the newest N (0 = off). |
 | `options_prompt` | `true` | The PC SETTINGS (Y) button on the game's Options screen. |
+| `explosion_shake` | `game` | Camera shake from explosions and Power Plays: `game` (on), `off`. |
+| `unlock_all` | `false` | Every event, track, game mode and car can be picked. See [Unlocks and decals](#unlocks-and-decals). |
+| `bonus_content` | `false` | The PC cheat-code extras: Expressway, Cobretti SlipStream, the retailer cars, the Euro livery pack. |
+| `pure_decal` | `false` | The decal for owning a save of the game Pure. |
 | `menu` | `true` | `false` = no overlay at all. |
+
+### Unlocks and decals
+
+All of this is on the GAME page of PC SETTINGS. It is off by default and does nothing while you are online (from the
+online sign-in until you leave online play).
+
+* UNLOCK ALL, BONUS CONTENT, PURE DECAL: switches. The patch never writes your save. While a switch is on, the menus
+  show the content as unlocked; when you turn it off, the game's own locks come back. But the game saves what you
+  play as usual: a race you win in an event that was locked counts in your save, and that stays. So when you turn a
+  switch on, the patch first copies your save into `save-backups\before-unlock-<date>` in the game folder. If it
+  cannot make that copy, the switch stays off and the help line says so. When you turn the last one off, the log
+  (`splitsecond-patch.log`) says whether the game wrote the save meanwhile. If it did not, your save is exactly as
+  before.
+* UNLOCK ONLINE DECALS (the six decals of ranked online races), UNLOCK ALL DECALS: these change your save for good.
+  Press A once, then again within 8 seconds to confirm. The patch first copies your save into
+  `save-backups\before-decals-<date>`; if it cannot, nothing happens. Then start a race alone (not split screen, not
+  online): the game gives the decals during the race through its own unlock, one a frame. The game saves them only
+  when you finish the race and press CONTINUE on the results. If you quit the race, quit the game or back out
+  through the menus first, your save stays as it was. There is no settings-file key for this on purpose.
+
+The `before-unlock-` and `before-decals-` folders are never deleted by the patch (`save_backups` deletes only its
+own dated folders). To undo: restore one as in [Troubleshooting](#troubleshooting) (lost or broken save). For the
+decals, restore the oldest `before-decals-` folder: a later press makes a newer folder that already holds the decals.
 
 ### Online (experimental)
 
@@ -263,6 +302,7 @@ comes from an older build and has no `online_server` line. Online is experimenta
 | `online_server` | `vps4954.rackhostvps.com` | Server host name or address (the port stays the game's 31120). A name is resolved at start. If it does not resolve, the log says so and online does not connect. No such line, or an empty value, means the default server. `off` = the game stays offline. |
 | `online_autologin` | `true` | With a server set, the patch signs you in by itself. Your name is your Steam name plus a 3-character tag. Accents become plain letters (`Árpád` → `Arpad`), Cyrillic becomes Latin letters, and a name with no letter left (Chinese, Japanese, Korean, only symbols) becomes `Racer` plus the tag. The account key is `splitsecond-online.key` next to the DLL. Copy it to use the same account on another PC. |
 | `online_name` | (empty) | A different name instead of the Steam name (up to 12 characters; the tag is added). |
+| `online_relay` | `auto` | How races reach the other players. `auto`: directly when possible, through the server's relay when your router or theirs blocks it (no port forwarding needed). `always`: always through the server, and the server gives no other player your address (a little more ping). `off`: the game's own direct connections only, as in 1.0.4. Players with the relay (`auto`, `always`) and without it (`off`, 1.0.4 and older) see only rooms of their own kind. |
 
 Your online account is the file `splitsecond-online.key` in the game folder. The 3-character tag comes from this
 key. Keep the file. The uninstaller does not remove it, and an update does not change it. To play with the same
@@ -270,15 +310,18 @@ account on another PC, copy the file there. Without the old file (deleted, or a 
 You then get a new tag, which means a new name and a new account. The old account stays on the server, but you
 cannot sign in to it without its key.
 
-Races are peer to peer, as with the game's original servers: the games of a race send to each other directly. So
-any signed-in player can get the public address of any player who is online.
+Races are peer to peer, as with the game's original servers: the games of a race send to each other directly when
+they can. When a game cannot reach another one directly (most home routers block this), the patch sends the race
+through the server's relay instead. No port forwarding is needed. With `auto` (the default) the other players in
+your race can get your public address. With `online_relay = always` every race goes through the server and the
+server gives no other player your address.
 
-What works (tested with three games on 2026-11-14): sign-in and account creation, a public (ranked) lobby, the race
-itself, and the results after it. The server also has a public statistics page at
+What works (tested with three games): sign-in and account creation, a public (ranked) lobby, the race itself, and
+the results after it, with direct connections and through the relay. The server also has a public statistics page at
 [vps4954.rackhostvps.com/backonair](https://vps4954.rackhostvps.com/backonair/): who is online, open games, daily numbers. What does not work yet:
 
-* So far races have run only between PCs on one home network. Between players behind different home routers a
-  race may fail. The fix for that (a relay on the server) is not in this release.
+* Players on 1.0.5 and players on 1.0.4 or older do not see each other's rooms, because only 1.0.5 has the relay.
+  Everyone should update. With `online_relay = off` you see only the rooms of players without the relay.
 * Private games with invitations: the server refuses them, and the friends list is empty. A public race needs 3
   players, so 2 players alone cannot race.
 * No leaderboards in the game.
@@ -339,9 +382,10 @@ stalls of 100 ms or more, the worst 1.4 s. With pre-compile, none went over 70 m
 * Windows memory: the game is a 32-bit program with 2 GB of memory. The patch keeps DXVK inside that limit
   (`dxvk_fit`), but very high settings plus DXVK leave less room.
 * TAA (`aa = taa` / `taa_high`) can smear slightly on fast-moving cars, because the game gives no per-object motion.
-* Online is experimental. It uses one replacement server (`online_server`). Races are tested on one home network
-  only, private games with invitations do not work, and a public race needs 3 players. See
-  [Online](#online-experimental).
+* Online is experimental. It uses one replacement server (`online_server`). Private games with invitations do not
+  work, a public race needs 3 players, and 1.0.4 players do not see 1.0.5 rooms. See [Online](#online-experimental).
+* Ultrawide (21:9, 32:9) is tested only in a window on a 16:9 monitor, not on a real ultrawide monitor. Menu bands
+  and backgrounds end at the 16:9 box; they do not reach the screen edges.
 * Only the Steam exe that the English, German, French, Italian and Spanish versions share is supported. The Russian
   and Polish Steam versions have their own exe: the patch stays off and a message says so. To use the patch, in
   Steam right-click Split/Second > Properties > General > Language, choose English and let Steam update the game.
@@ -352,25 +396,70 @@ stalls of 100 ms or more, the worst 1.4 s. With pre-compile, none went over 70 m
   Linux / Steam Deck, run `sh install.sh` again or set the launch option. The patch writes `splitsecond-patch.log`
   next to the DLL. If that file is not there, the DLL was not loaded.
 * The game freezes at start: remove the old HFR mod (`DXFreezerServer.dll`).
+* HDR looks grey or wrong: read the `[summary]` lines in the log (see [HDR](#hdr)) and attach the log.
 * Crash in a race load on Windows: set `renderer = native` and try again. Send the log with `vm_log = 30`.
 * Judder at 60 fps on the Steam Deck OLED or a 144 Hz monitor: set the screen to 60 Hz (or 120 Hz).
 * The overlay does not open with the pad: it needs `pad_support = true`. F1 always works.
 * A setting says RESTART NEEDED: quit and start the game again.
 * Your settings seem gone after an update: the installer keeps your `splitsecond.conf`. After an uninstall, it is
   in the newest `patch-backup` folder.
-* Online sign-in fails every time: look for `[online] sign-in as "..." failed` in the log. If the server is up, the
+* Online sign-in fails every time: look for `[online] sign-in failed` in the log. If the server is up, the
   name belongs to another key. Put back the `splitsecond-online.key` that made the account, or set
   `online_name = <another name>` in `splitsecond.conf`.
-* Lost or broken save: quit the game first. Then copy the files from the newest folder in `save-backups` into
+* Online, you do not see a friend's room: both of you need 1.0.5 (or both the same `online_relay` kind, see
+  [Online](#online-experimental)).
+* Lost or broken save: quit the game first. Then copy the files from the newest folder in `save-backups` (or a
+  `before-unlock-` / `before-decals-` folder) into
   `Documents\Disney Interactive Studios\Split Second\` (on the Steam Deck this is inside the game's Proton folder,
   `steamapps/compatdata/297860/pfx/drive_c/users/steamuser/Documents/...`).
 
 When you report a problem, send `splitsecond-patch.log` from a session that shows it. After a crash and a restart,
 the crashed session's log is `splitsecond-patch.prev.log`. Say which GPU, which system (Windows, Steam Deck, other
-Linux) and which `fps` setting you use. For stutter, also set `frame_log = true`. The log holds your online name,
-but not the PC's name, its LAN address or the user name in a folder path (that one reads `<user>`).
+Linux) and which `fps` setting you use. For stutter, also set `frame_log = true`. The log does not hold your Steam
+name, your online name, your SteamID, the PC's name, its LAN address or the user name in a folder path (that one
+reads `<user>`).
 
 ## Release notes
+
+### 2026-11-17: 1.0.5
+
+* Online races now work between players behind different home routers. When the games of a race cannot reach each
+  other directly, the patch sends the race through the server's relay. No port forwarding is needed. This is on by
+  default (`online_relay = auto`).
+* `online_relay = always` sends every race through the server, so no other player gets your address (a little more
+  ping). `online_relay = off` keeps the 1.0.4 behaviour (direct connections only).
+* Everyone should update. Players on 1.0.5 and players on 1.0.4 or older do not see each other's online rooms.
+* Still the same limits: a public race needs 3 players, private games with invitations do not work, and there are
+  no leaderboards in the game.
+* The log has a short `[summary]` block for HDR problems: Windows HDR on the game's monitor, the window, what DXVK
+  made, the real GPU driver version, overlays, and a verdict. The HDR row's help line says so when Windows HDR is off.
+* The log no longer holds your Steam name, your online name or any part of your SteamID.
+* Fixed a crash at start-up that came about once in ten starts: the patch now waits until the game's copy protection
+  has finished its start-up work before it hooks the game's network, sound and slipstream calls.
+* Fixed the menu key repeat of 1.0.4: a short arrow tap could keep the menu moving on its own (on some PCs it ran
+  down to QUIT). A tap now moves one step, and a held arrow repeats after 0.4 s, 10 steps a second, and stops when
+  you let go of the key.
+* Pads: the throttle and the brake no longer cancel each other out when you hold both triggers. The game reads both
+  triggers as one axis, so braking or drifting with the throttle held did almost nothing. The Controls screen and
+  your saved bindings do not change. To get the old behaviour, set `pad_split_triggers = false`.
+* With `renderer = native`, the HDR page now says that HDR needs `renderer = dxvk`. Windows' own Direct3D 9 cannot
+  send HDR, and before this the HDR sliders showed but did nothing.
+* `skip_intro` needs the controller layer (`pad_support = true`). The README, the help line and the log now say so.
+* Motion blur: by default the speed blur is now as long at 60 and 120 fps as it is at 30 fps, the look of the
+  console version (`motion_blur = console`; `game` keeps the PC original, `off` turns it off). The blur is drawn by
+  the patch's own shader, with smooth streaks instead of repeated copies (`motion_blur_quality = high`, `low` on the
+  Steam Deck; `game` uses the game's own shader).
+* New picture switches: VIGNETTE (the darker corners), TOP GRADIENT (the light band at the top) and LENS FLARES
+  on the GRAPHICS page, EXPLOSION CAMERA SHAKE on the GAME page. All are on by default and change at once.
+* New setting SCENERY VISIBILITY (`visibility_lists = off`): things hidden behind buildings are drawn too, so less
+  pops in when you turn a corner. It costs frame time; the default stays `game`. A higher DRAW DISTANCE now also
+  shows the particles further away.
+* Ultrawide screens: the player name tags keep their shape, the race intros have no black bars at the top and
+  bottom, and in split screen each player's HUD sits in that player's half.
+* New switches on the GAME page: UNLOCK ALL, BONUS CONTENT and PURE DECAL. They are off by default, never write
+  your save and do nothing online. Two actions give the online decals or all decals for good. Your save gets a backup
+  first. Finish a race and press CONTINUE on the results to save the decals. See
+  [Unlocks and decals](#unlocks-and-decals).
 
 ### 2026-11-17: 1.0.4
 
@@ -460,6 +549,15 @@ Online (experimental)
 The patch's own code is under the MIT licence (`LICENSE`). It contains no part of the game. The zip ships DXVK
 2.7.1 (zlib licence) unchanged in `dxvk\`. See `THIRD_PARTY_NOTICES.md` for DXVK, SMAA, FXAA and the other
 parts this patch uses.
+
+Thanks to [Glimpse-Fix](https://github.com/frankyfife/glimpse_fix) by frankyfife: the motion blur, vignette,
+top gradient, lens flare and explosion shake switches use addresses it found first, and the visibility-map switch
+and the particle distances used by `visibility_lists` and `draw_distance` came from reading it (it also uses the
+scenery and power-play switches we had found). The addresses behind the unlocks came from it too: the game's four
+"all unlocked" menu switches, the PC cheat-code switches, the achievement object and the game's own debug unlock
+path. Thanks to MR-KOKOS, whose ultrawide work (Glimpse-Fix pull request #9, issue #6) pointed us to the player tag
+sizes, the engine's letterbox amount and the layout of the split-screen HUD. We used these findings only; no code
+was copied. See `docs/technical.md`.
 
 Back on Air is an unofficial fan project, not affiliated with or endorsed by Disney or Black Rock Studio. You need
 your own copy of the game.

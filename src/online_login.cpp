@@ -320,13 +320,10 @@ SteamFound FindSteam() {
     roots.push_back(UnixToWine(h + "/.local/share/Steam"));
     roots.push_back(UnixToWine(h + "/.steam/steam"));
   }
-  std::string text, file;
+  std::string text;
   for (const std::string& r : roots) {
     text = ReadFileA(r + "\\config\\loginusers.vdf");
-    if (!text.empty()) {
-      file = r;
-      break;
-    }
+    if (!text.empty()) break;
   }
   const std::map<std::string, Fields> users = LoginUsers(text);
 
@@ -388,7 +385,7 @@ SteamFound FindSteam() {
     if (p != it->second.end()) out.persona = p->second;
   }
   if (!out.persona.empty()) {
-    out.how = "loginusers.vdf in " + file + ", user by " + out.how;
+    out.how = "loginusers.vdf, user by " + out.how;  // no folder: the log is posted publicly
   } else {
     out.persona = RegString("Software\\Valve\\Steam", "LastGameNameUsed");
     if (!out.persona.empty()) out.how = "the registry's LastGameNameUsed" + (id.empty() ? std::string() : ", id by " + out.how);
@@ -457,8 +454,8 @@ void ENTRY_THIS MainMenuUpdate(void* self, float dt) {
   if (before == 4 && after == 2 && Rd(os + 0x148) == kErrNoAccount && Rd(os + 0x18) == 0 &&
       SameString(Rd(os + 0x10), g_id.name) && g_confirms < 3) {
     g_confirm_at = GetTickCount() | 1;
-    ss_log("[online] the server does not know \"%s\" yet: the game's create-account question is answered with yes",
-           g_id.name.c_str());
+    ss_log("[online] the server does not know the sign-in name yet: the game's create-account question is answered "
+           "with yes");
     return;
   }
   // Any other failure of a sign-in with our name. The game shows its own failure text and does not try again by
@@ -469,9 +466,9 @@ void ENTRY_THIS MainMenuUpdate(void* self, float dt) {
   if (before == 4 && after == 2 && Rd(os + 0x18) == 0 && Rd(os + 0x148) != kErrNoAccount &&
       SameString(Rd(os + 0x10), g_id.name) && g_failed_logs < 3) {
     ++g_failed_logs;
-    ss_log("[online] sign-in as \"%s\" failed (game error %08x). If the server is up, the name may belong to another "
+    ss_log("[online] sign-in failed (game error %08x). If the server is up, the name may belong to another "
            "key: put back the splitsecond-online.key that made it, or set online_name in splitsecond.conf",
-           g_id.name.c_str(), Rd(os + 0x148));
+           Rd(os + 0x148));
   }
   if (!g_confirm_at) return;
   const uintptr_t pq = Rd(kPopups);
@@ -559,17 +556,19 @@ DWORD WINAPI Worker(LPVOID) {
              Upper((own_base.empty() ? base : own_base) + tag).c_str());
   RegisterRows(true);
 
-  const std::string shown_id = st.id64.size() > 4 ? "..." + st.id64.substr(st.id64.size() - 4) : "not found";
+  // The log goes into public bug reports: no Steam name, no SteamID, no sign-in name (it is made from the Steam name).
+  const char* id_state = st.id64.empty() ? "not found" : "found";
   if (base.empty()) {
     ss_log("[online] no Steam name found (SteamID %s) and no online_name in splitsecond.conf: automatic sign-in off, "
-           "the game's own dialog asks", shown_id.c_str());
+           "the game's own dialog asks", id_state);
     return 0;
   }
   g_id.name = base + tag;
   g_id.password = pw;
   g_id.source = source;
-  ss_log("[online] sign-in name \"%s\" from %s; SteamID %s; key file %s", g_id.name.c_str(), source.c_str(),
-         shown_id.c_str(), made ? "made now (a new account will be created)" : "found");
+  ss_log("[online] sign-in name of %u characters from %s; SteamID %s; key file %s",
+         static_cast<unsigned>(g_id.name.size()), source.c_str(), id_state,
+         made ? "made now (a new account will be created)" : "found");
   if (!HookMainMenu()) return 0;
   MemoryBarrier();
   InterlockedExchange(&g_ready, 1);

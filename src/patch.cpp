@@ -1013,8 +1013,10 @@ long __stdcall PresentHook(void* dev, const void* a, const void* b, void* c, con
   ss_glyphs_present(dev);  // glyphs.cpp: a button_prompts change re-writes the prompt textures
   ss_pipewarm_present(dev);  // pipewarm.cpp: pipeline_warmup's replay at the level load (before the overlay)
   ss_streampool_present();  // streampool.cpp: stream_pool's limit at a level load, the hold at 480 nodes
+  ss_extras_present();  // extras.cpp: the unlock switches' bytes and the decal requests (data only)
   ss_menu_present(dev);  // the settings overlay (menu.cpp): drawn over the finished picture while open
   ss_hdr_present(dev);   // HDR's output pass (hdr.cpp; hdr only), after the overlay; and the probe (hdr_probe only)
+  ss_diag_present();     // diag.cpp: the first frame starts the [summary] block (one flag test after that)
   ss_testshot(dev);      // test aid, SS_SHOT_AT only: after the overlay, so a capture shows what the screen shows
   const bool sixty = g_mode == MODE_SIXTY && g_freq;
   double spun = 0;
@@ -3431,11 +3433,16 @@ bool AnySsEnv() {
 bool ss_patch_active() { return g_active; }
 
 
+const char* volatile g_pacing_name = "auto";
+
 bool ss_frame_vsync() {
   static int on = -1;
   if (on < 0) {
     const char* e = getenv("SS_FRAME_PACING");
     const std::string v = e ? e : ConfValue("frame_pacing");
+    static std::string name;  // for diag.cpp's [summary] (ss_frame_pacing_name)
+    name = v.empty() ? "auto" : v;
+    g_pacing_name = name.c_str();
     g_vrr = v == "vrr";  // before `on`: a thread that finds the decision made also finds this
     g_fastest = FastestFor(v);
     on = VsyncFor(v) ? 1 : 0;
@@ -3459,6 +3466,24 @@ bool ss_frame_vsync() {
     }
   }
   return on > 0;
+}
+
+const char* ss_frame_pacing_name() {
+  ss_frame_vsync();
+  return g_pacing_name;
+}
+
+unsigned ss_frame_dev_interval() { return g_dev_interval; }
+
+// picture.cpp: the game's update rate now (one render per update): 30 unless our step runs (fps 60 or more), else
+// 60 or, in a race in 1/g_rate steps, g_rate.
+double ss_frame_update_rate() { return g_mode == MODE_SIXTY && g_code_ok ? CadRate() : 30.0; }
+
+// quality.cpp / picture.cpp at start, before the worker has chosen the mode: fps (or SS_PATCH_MODE) asks for 60 or more.
+bool ss_frame_wanted_above_30() {
+  const char* m = getenv("SS_PATCH_MODE");
+  if (m && *m) return !strcmp(m, "60") || !strcmp(m, "120") || !strcmp(m, "native") || !strcmp(m, "present120");
+  return WantedRate() != 0;
 }
 
 bool ss_frame_immediate() {
@@ -3510,12 +3535,14 @@ void ss_patch_start(HMODULE self) {
   ss_quality_start();
   ss_aspect_start();
   ss_ppicon_start();
+  ss_extras_start();  // extras.cpp: unlock_all, bonus_content, pure_decal (memory only, off online)
   ss_keyrepeat_start();
   ss_options_entry_start();
   ss_lodfade_start();
   ss_shadowsmooth_start();
   ss_deband_start();
   ss_slipstream_start();
+  ss_picture_start();
   ss_autopilot_start();
   ss_streampool_start();
 }

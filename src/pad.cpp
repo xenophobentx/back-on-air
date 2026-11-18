@@ -18,7 +18,8 @@
 // else does (Sony / Nintendo / generic pads), or passed through untouched (wheels, the pads the game knows).
 // The game's XInputSetState is routed from the device-list index to the right XInput slot.
 //
-// Nothing of the game is written: only this DLL's own objects and the entry code of xinput1_3.dll in memory.
+// Nothing of the game's code is written: only this DLL's own objects, the entry code of xinput1_3.dll in memory, and
+// (split triggers, pad_split_triggers) three slots of the input manager's .rdata vtable 0xBA2904.
 
 #define DIRECTINPUT_VERSION 0x0800
 #include <initguid.h>  // first: defines the GUIDs of this translation unit
@@ -37,6 +38,7 @@
 #include <vector>
 
 #include "menu.h"
+#include "padsplit_core.h"
 #include "ss_common.h"
 
 bool ss_write_word(void* where, uintptr_t value, uintptr_t* previous = nullptr);  // testshot.cpp: one lock for all slot writes
@@ -65,6 +67,7 @@ struct Config {
   bool translate = true;      // pad_translate_dinput: DirectInput-only pads (Sony, Nintendo, generic) -> Xbox layout
   bool log_input = false;     // pad_log: log button changes (the owner's evidence), capped
   bool foreground_only = false;  // pad_foreground_only: report nothing while another application's window is in front
+  bool split_triggers = true;    // pad_split_triggers: throttle and brake read RT and LT apart (read once at start)
 } g_cfg;
 
 bool ParseBool(const std::string& v, bool def) {
@@ -99,6 +102,7 @@ void LoadConfig() {
   c.translate = ParseBool(ss_conf("pad_translate_dinput"), true);
   c.log_input = ParseBool(ss_conf("pad_log"), false);
   c.foreground_only = ParseBool(ss_conf("pad_foreground_only"), false);
+  c.split_triggers = ParseBool(ss_conf("pad_split_triggers"), true);
   if (!env_on && !ss_conf_present()) c.on = false;  // no conf file and no switch: the DLL only forwards DirectInput
   g_cfg = c;
 }
@@ -472,6 +476,153 @@ bool OtherAppInFront() {
   return pid != 0 && pid != GetCurrentProcessId();
 }
 
+// ------------------------------------------------------------------------------ split triggers (issue #5)
+//
+// The virtual pad puts both triggers on Z (LT +, RT -) like a wired Xbox 360 pad, so the game's own Xbox 360 table
+// (brake = Z+, throttle = Z-) works, but both held at once cancel: a brake press on full throttle reads as nothing.
+// The game asks for an action's value through the input manager's vtable 0xBA2904 (.rdata):
+//   slot 0 0x40F0F0  float (devid*, action*): the value now (throttle / brake: 41 / 42 swapped unless +0xCF80 is 11)
+//   slot 1 0x40EE10  bool (devid*, action*): value and press edges from both snapshots (0x410770)
+//   slot 2 0x40E510  bool (devid*, action*): the same from the fixed raw-control table 0xCFA780 (49 / 50 = Z+ / Z-)
+// devid = {type, index} (type 1: keyboard), the index picks the pad block (mgr + 0xCF94 + index * 0x560, count
+// +0xCF90), whose device is at +0x244 and whose two DIJOYSTATE2 snapshots are at +0x294 / +0x3A4 (GetDeviceState
+// fills one per poll, 0x40D9C1). Every Z read (0x40DCE0, controls 4 / 5) is inside these three methods.
+// The three slots point at wrappers: they find the row the original will read, the same way it does (data reads
+// only); when it is Z+ or Z- and the block's device is one of our virtual pads, the snapshots' lZ hold LT or RT alone
+// for that one call (padsplit_core.h). Bindings, the Controls screen and the save are untouched; nothing of the game's
+// code is written.
+
+constexpr uintptr_t kQueryVt = 0xBA2904;
+constexpr uint32_t kQueryOrig[3] = {0x40F0F0, 0x40EE10, 0x40E510};
+constexpr uintptr_t kFixedRows = 0xCFA780;  // slot 2's table, rows {action, vk, ctl, kind, angle}, ends at action 0x45
+constexpr uint32_t kActionEnd = 0x45, kRows = 0x45, kRowSize = 0x14, kKindAxis = 1, kTypeKeyboard = 1;
+constexpr uint32_t kEntryCount = 0xCF6C, kEntries = 0xCF70, kEntrySize = 0x584, kEntryId = 0x564, kEntryValid = 0x56C;
+constexpr uint32_t kSwapMode = 0xCF80, kBlockCount = 0xCF90, kBlocks = 0xCF94, kBlockSize = 0x560, kMaxBlocks = 4;
+constexpr uint32_t kBlockDevice = 0x244, kBlockSnap = 0x294, kSnapSize = 0x110;
+
+padsplit::Dev g_split[8];   // the virtual pads the game holds (game thread only)
+bool g_split_on = false;    // the wrappers are in
+
+uint32_t Rd(uintptr_t a) { return *reinterpret_cast<const uint32_t*>(a); }
+
+padsplit::Dev* SplitFind(const void* dev) {
+  if (!dev) return nullptr;
+  for (auto& d : g_split)
+    if (d.dev == dev) return &d;
+  return nullptr;
+}
+
+void SplitRegister(const void* dev, int list_index) {
+  if (SplitFind(dev)) return;
+  for (auto& d : g_split)
+    if (!d.dev) {
+      d = padsplit::Dev();
+      d.dev = dev;
+      d.list_index = list_index;
+      return;
+    }
+}
+
+void SplitForget(const void* dev) {
+  if (padsplit::Dev* d = SplitFind(dev)) *d = padsplit::Dev();
+}
+
+// The control the original method `slot` reads for this query when it is an axis half of a pad, and that pad's block.
+int SplitControl(int slot, uintptr_t mgr, const uint32_t* devid, const uint32_t* action, uintptr_t* block) {
+  if (!devid || !action || devid[0] == kTypeKeyboard) return -1;
+  uintptr_t row = 0;
+  if (slot == 2) {
+    for (uint32_t i = 0; i < 0x100 && !row; ++i) {
+      const uintptr_t r = kFixedRows + i * kRowSize;
+      if (Rd(r) == kActionEnd) break;
+      if (Rd(r) == *action) row = r;
+    }
+  } else {
+    const uintptr_t entries = Rd(mgr + kEntries);
+    const uint32_t count = Rd(mgr + kEntryCount);
+    uintptr_t e = 0;
+    for (uint32_t i = 0; i < count && i < 16 && !e; ++i) {
+      const uintptr_t c = entries + i * kEntrySize;
+      if (*reinterpret_cast<const uint8_t*>(c + kEntryValid) && Rd(c + kEntryId) == devid[0] && Rd(c + kEntryId + 4) == devid[1]) e = c;
+    }
+    if (!e) return -1;
+    uint32_t act = *action;
+    if (slot == 0 && Rd(mgr + kSwapMode) != 11) act = act == 41 ? 42 : 41;  // as 0x40F146 does
+    for (uint32_t i = 0; i < kRows && !row; ++i)
+      if (Rd(e + i * kRowSize) == act) row = e + i * kRowSize;
+  }
+  if (!row || Rd(row + 12) != kKindAxis) return -1;
+  const uint32_t index = devid[1];
+  if (index >= Rd(mgr + kBlockCount) || index >= kMaxBlocks) return -1;
+  *block = mgr + kBlocks + index * kBlockSize;
+  return static_cast<int>(Rd(row + 8));
+}
+
+// Before the original: the swaps for this query (0 when none).
+int SplitBefore(int slot, void* self, const uint32_t* devid, const uint32_t* action, padsplit::Swap sw[2]) {
+  if (!g_split_on) return 0;
+  uintptr_t block = 0;
+  const int ctl = SplitControl(slot, reinterpret_cast<uintptr_t>(self), devid, action, &block);
+  if (ctl != padsplit::kCtlZPos && ctl != padsplit::kCtlZNeg) return 0;
+  padsplit::Dev* d = SplitFind(*reinterpret_cast<void* const*>(block + kBlockDevice));
+  if (!d) return 0;  // a passed-through device: its own axes as they are
+  const uintptr_t bufs[2] = {block + kBlockSnap, block + kBlockSnap + kSnapSize};
+  const int n = padsplit::Apply(*d, bufs, ctl, sw);
+  if (n && !d->logged) {
+    d->logged = true;
+    ss_log("[pad] device #%d: first split trigger read (action %u reads %s alone, query slot %d)", d->list_index,
+           static_cast<unsigned>(*action), ctl == padsplit::kCtlZPos ? "LT (Z+)" : "RT (Z-)", slot);
+  }
+  return n;
+}
+
+#define SPLIT_THIS __attribute__((thiscall, force_align_arg_pointer))
+using QueryValueFn = float(__attribute__((thiscall)) *)(void*, const uint32_t*, const uint32_t*);
+using QueryEdgeFn = uint32_t(__attribute__((thiscall)) *)(void*, const uint32_t*, const uint32_t*);
+
+float SPLIT_THIS SplitQuery0(void* self, const uint32_t* devid, const uint32_t* action) {
+  padsplit::Swap sw[2];
+  const int n = SplitBefore(0, self, devid, action, sw);
+  const float v = reinterpret_cast<QueryValueFn>(kQueryOrig[0])(self, devid, action);
+  padsplit::Restore(sw, n);
+  return v;
+}
+template <int kSlot>
+uint32_t SPLIT_THIS SplitQueryEdge(void* self, const uint32_t* devid, const uint32_t* action) {
+  padsplit::Swap sw[2];
+  const int n = SplitBefore(kSlot, self, devid, action, sw);
+  const uint32_t v = reinterpret_cast<QueryEdgeFn>(kQueryOrig[kSlot])(self, devid, action);
+  padsplit::Restore(sw, n);
+  return v;
+}
+
+// Once, when the layer starts (the game has called DirectInput8Create: its image is unpacked).
+void SplitInstall() {
+  if (!g_cfg.split_triggers) {
+    ss_log("[pad] split triggers off (pad_split_triggers = false): LT and RT share the Z axis, as on a stock Xbox 360 pad");
+    return;
+  }
+  const uintptr_t mine[3] = {reinterpret_cast<uintptr_t>(&SplitQuery0), reinterpret_cast<uintptr_t>(&SplitQueryEdge<1>),
+                             reinterpret_cast<uintptr_t>(&SplitQueryEdge<2>)};
+  uint32_t* vt = reinterpret_cast<uint32_t*>(kQueryVt);
+  bool known = !IsBadReadPtr(vt, 12);
+  for (int i = 0; known && i < 3; ++i) known = vt[i] == kQueryOrig[i] || vt[i] == mine[i];
+  if (!known) {
+    ss_log("[pad] split triggers not in: the input query table at 0x%08X is not the known build (LT and RT share Z)",
+           static_cast<unsigned>(kQueryVt));
+    return;
+  }
+  for (int i = 0; i < 3; ++i)
+    if (vt[i] != mine[i] && !ss_write_word(&vt[i], mine[i])) {
+      ss_log("[pad] split triggers not in: cannot write query slot %d (error %lu)", i, GetLastError());
+      for (int j = 0; j < i; ++j) ss_write_word(&vt[j], kQueryOrig[j]);
+      return;
+    }
+  g_split_on = true;
+  ss_log("[pad] split triggers on: an action bound to Z+ / Z- reads LT / RT alone on the virtual pads (query slots 0-2 of 0x%08X)",
+         static_cast<unsigned>(kQueryVt));
+}
+
 struct VPad final : IDirectInputDevice8A {
   LONG refs = 1;
   Entry e;
@@ -482,7 +633,11 @@ struct VPad final : IDirectInputDevice8A {
   WORD real_last = 0;  // the pad's own buttons at the last read (before the menu, the taps): skip_intro's user check
   bool first_state = true;
 
-  VPad(const Entry& en, IDirectInputDevice8A* in) : e(en), inner(in) {}
+  LONG z_plus = 0, z_minus = 0;  // the last Fill's lZ with LT alone / RT alone (split triggers)
+
+  VPad(const Entry& en, IDirectInputDevice8A* in) : e(en), inner(in) {
+    SplitRegister(static_cast<IDirectInputDevice8A*>(this), e.list_index);
+  }
 
   // ---- IUnknown
   HRESULT STDMETHODCALLTYPE QueryInterface(REFIID r, void** o) override {
@@ -504,6 +659,7 @@ struct VPad final : IDirectInputDevice8A {
         g_xi.set(static_cast<DWORD>(e.slot), &z);
       }
       if (inner) inner->Release();
+      SplitForget(static_cast<IDirectInputDevice8A*>(this));
       delete this;
     }
     return n;
@@ -546,6 +702,8 @@ struct VPad final : IDirectInputDevice8A {
     ax[0] = ScaleAxis(lx, rmin[0], rmax[0]);
     ax[1] = ScaleAxis(-ly, rmin[1], rmax[1]);
     ax[2] = ScaleAxis(lt - rt, rmin[2], rmax[2]);
+    z_plus = ScaleAxis(lt, rmin[2], rmax[2]);  // the halves alone, for the game's Z+ / Z- reads (split triggers)
+    z_minus = ScaleAxis(-rt, rmin[2], rmax[2]);
     ax[3] = ScaleAxis(rx, rmin[3], rmax[3]);
     ax[4] = ScaleAxis(-ry, rmin[4], rmax[4]);
     ax[5] = ScaleAxis(0, rmin[0], rmax[0]);  // Rz: a pad that has none, centred
@@ -658,6 +816,8 @@ struct VPad final : IDirectInputDevice8A {
     if (!ok || ss_menu_capturing()) p = Pad();  // the settings menu has the pads: the game sees them centred
     if (ss_intro_tap(e.list_index)) p.buttons |= XINPUT_GAMEPAD_A;  // skip_intro: taps while the boot movies run
     Fill(p, data, cb);
+    if (padsplit::Dev* d = SplitFind(static_cast<IDirectInputDevice8A*>(this)))
+      padsplit::Record(*d, reinterpret_cast<uintptr_t>(data), z_plus, z_minus, static_cast<LONG*>(data)[2]);
     if (first_state) {
       first_state = false;
       ss_log("[pad] device #%d (%s): first state read, pad %s", e.list_index, e.name.c_str(), ok ? "reports" : "silent");
@@ -1144,9 +1304,25 @@ long ss_pad_wrap_directinput(const void* riid, void** inout) {
   StartOnce();
   if (!g_cfg.on || !inout || !*inout) return S_FALSE;
   if (!IsEqualIID(*static_cast<const IID*>(riid), IID_IDirectInput8A)) return S_FALSE;
+  static bool split_once = false;
+  if (!split_once) {
+    split_once = true;
+    SplitInstall();
+  }
   *inout = static_cast<IDirectInput8A*>(new WrapDI(static_cast<IDirectInput8A*>(*inout)));
   ss_log("[pad] IDirectInput8A wrapped");
   return S_OK;
+}
+
+// intro.cpp: skip_intro taps A on the virtual pad #0, so it needs the layer on. Before the layer started this
+// gives what its start will decide (the same rule as LoadConfig).
+bool ss_pad_support_on() {
+  if (g_started) return g_cfg.on;
+  const char* env = getenv("SS_PAD");
+  const char* fake = getenv("SS_PAD_FAKE");
+  if (env) return ParseBool(env, true);
+  if (fake && *fake == '1') return ParseBool(ss_conf("pad_support"), true);
+  return ss_conf_present() && ParseBool(ss_conf("pad_support"), true);
 }
 
 // The settings menu reads the XInput pads itself (render thread), so opening and working it does not depend on the
@@ -1181,6 +1357,7 @@ bool ss_pad_apply(const char* key, const char* value) {
   g_cfg.on = was.on;
   g_cfg.hotplug = was.hotplug;
   g_cfg.translate = was.translate;
+  g_cfg.split_triggers = was.split_triggers;
   // pad_rumble / pad_rumble_gain: the routing hook went in at start-up and reads g_cfg on every call.
   (void)value;
   return true;

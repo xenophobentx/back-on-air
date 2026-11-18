@@ -601,7 +601,15 @@ loads them again (a level's `CityLOD.params`, `PlayerLOD_ps3.params`): the scene
 fades, split-screen set; mid 0xD38A98 and stream radius 0xD389F0 kept), the visibility-map switch 0xD82788 above x1
 and, times the factor, the opponents' off distance `AIFarToOff` 0xD37C98 (200 m as loaded) and `NemTruckFarToOff` 0xD37CC8;
 PlayerLOD `MaxAIMidLODs` 0xD37C80 = 31 and `AIMidToFar` 0xD37C90 = 200 m (the Xbox file's) for `console`, plus
-`MaxAINearLODs` 0xD37C78 >= 7 and `textureLodOverride` 0xD37CF0 = 0 for `high`. Log lines `[aniso]`, `[detail]`.
+`MaxAINearLODs` 0xD37C78 >= 7 and `textureLodOverride` 0xD37CF0 = 0 for `high`. Above x1 the particles' LOD distance
+0xD373DC (150 m) and further LOD distance 0xD373FC (200 m) take the factor too (0x7CF960: emission (D - d) / D below the LOD
+distance D, at least 0.5, 0.4 beyond the further one; the split-screen set and the 30 m near
+thinning are left alone). `Debris/FadeInDist` 0xD193F0 has no reader in the image and is not touched.
+`visibility_lists = off` sets `Sectors/Visibility/Disable Visibility Map` 0xD9AFCC once at start (with 0xD82788 and
+0xD8B368, at any draw distance): every view's cell of the map stays -1 (0xAE6430), so every sector gets LOD cap 3, the
+view's draw skips the seclusion-zone path (0x7C374F), and 0xAE6720 answers visible for every entity (opponents,
+power plays, four other draw lists). It is never cleared in a session: while it is set the map does not keep the
+entities' cells (0xAE65A0). Log lines `[aniso]`, `[detail]`.
 `shadow_distance = console | 1.5 | 2` scales the sun shadow's range and fadeout (300 m and 100 m at HIGH / VERY HIGH,
 the `Lighting/CSM_Max/Settings` tweaks; the level's own numbers at LOW / MEDIUM): the light pass fills a settings record
 every frame (0x88A3E0) and hands it to the shadow maps' compare and set-up methods; those two vtable slots of both shadow
@@ -889,6 +897,35 @@ follow the widened camera now that it is wide during the update. Not seen in a t
 Play). Not covered: screen-space effects keep their pixel sizes (the vignette stretches with the screen); split screen
 is widened like one view.
 
+Ultrawide extras (2026-11-18, SSPC-57), only while the screen is wider than 16:9 (`aspect` not `16:9`):
+
+* Player name tags (the names over the other cars in split screen and online). The draw (0x5697xx) sizes them as
+  tweakable / view width: `UI/HUD/PlayerNames3D` Name Width 0xD1DB68 (0.54), Icon Width 0xD1DB78 (0.1), Icon Offset X
+  0xD1DB88 (-0.0158), tuned for 16:9. They are scaled by 16:9 / screen shape; the heights stay.
+* The engine's letterbox: `LetterBox/LetterBox Amount` 0xD36F54 (0.118, read by 0x793E50) is the height of the black
+  bars above and below the picture in the car and race intros. Set to 0 on a wider screen. Our black side strips
+  beside boxed menus (pause, results) are separate and stay.
+* Split screen HUD: two views side by side (viewport manager `+0 = 2`, `+8 = -1`, the case in which 0x794370 halves the
+  shape). `UI/HUD/Hud.gfx` and `UI/HUD/TimerOverlay.gfx` hold player 1's HUD in the left half of their 16:9 stage and
+  player 2's in the right half. Boxed whole, both sat in the middle of the screen. The Display wrapper now draws such
+  a movie twice: the stage at the box's shape with its left half in the middle of the left screen half, then its right
+  half in the middle of the right one (scissor on that half), and puts the boxed viewport back. The per-player movies
+  in a half-width viewport were already boxed to 8:9 in the middle of their half. Not changed: DialsPower / DialsInfo
+  (drawn into a texture the game puts on a 3D panel). Pure part and test: `src/aspect_core.h`, `make aspecttest`.
+
+The four tweakables are .data words, checked once (registration string in .rdata and stock value) and put back to stock
+when the screen stops being wider. On 16:9 and 16:10 nothing of this reads or writes anything (the Display path needs a
+wider screen; the tweakables are not even checked).
+
+Not done: full-screen Bink cinematics. The engine draws a full-screen movie as one quad fitted to the width, so above
+16:9 the top and bottom of the film are cut (no distortion). The boot films are skipped by default (`skip_intro`), and
+the videos in menus play inside boxed movies. The last pixel column (Glimpse-Fix reports it wrong above 16:9 in the
+stock game) is not confirmed in this build. Edge extension (menu bands to the screen edges) is not done.
+
+Findings from Glimpse-Fix (frankyfife; pull request #9 by MR-KOKOS, ultrawide; read only, no code copied): the
+player tag tweakables, the letterbox amount, the split-screen HUD movies and their layout, the Bink quad, the last
+column. Found by both projects independently: the constant 0xBAA9DC and the SetViewport wrapper.
+
 ### HDR output (`hdr`, `hdr_ready`, `hdr_peak`, `hdr_paper_white`, `hdr_hud`, `hdr_shadows`, `hdr_highlights`, `hdr_lift`; `src/hdr.cpp`)
 
 `hdr = true` (default false; the port's keys, values and defaults; the menu's HDR row switches it live) shows the light the game's tone mapper clips at
@@ -1113,6 +1150,33 @@ To restore a backup: close the game, copy the files from the chosen `save-backup
 save folder (replace the files there), and start the game. If Steam then asks about a cloud conflict, choose the
 local files. The next start makes a new backup of the restored files.
 
+### Unlocks and decals (`unlock_all`, `bonus_content`, `pure_decal`, two overlay actions; `src/extras.cpp`)
+
+Findings from Glimpse-Fix (frankyfife, GPL-3.0; facts only, no code), Steam build run-time VAs:
+
+* The menus' "is this locked" switches, as the game's QA menu sets them, one byte each in `.data`: all game modes
+  `0xD6FC54`, all episodes `0xD6FBA0`, all events `0xD7D978`, all vehicles `0xD6F8F0`.
+* The PC port's cheat-code extras ("PCcheat"): ten bytes from `0xD6C49C`, 8 bytes apart.
+* Pure decal: the profile's HasPureSave byte at `*(0xD64E6C)`; the game sets it when it finds a Pure save and clears
+  it when it looks again.
+* Decals = achievements: `*(0xD64E00) + 0x208` (vptr `0xC4AAC4`; bytes `+4` and `+0x3C` set with a signed-in
+  profile), one byte per achievement at `*(+0x2C)`, count 47 at `+0x38`. Entry 0 stands for all the others; 41..46
+  come only from ranked online results. The game's debug unlock: byte `0xD71954` (do it) and int `0xD11B6C` (which
+  id), read by the single-player race update, which clears the byte and unlocks through the normal path.
+
+What the patch does, from the Present hook, data only (no `.text`, never the save file): a switch that is on sets
+each of its bytes that holds 0 to 1 and remembers it; off puts back exactly those. Each turn-on first makes a kept
+backup (`saves.cpp` `ss_saves_backup_kept`: `save-backups\before-unlock-YYYY-MM-DD_HHMMSS\`, skipped when the newest
+such folder holds the same bytes; never pruned), and the bytes are set only after it succeeded. When the last switch
+goes off, the save is compared with that backup (`ss_saves_same_as_kept`) and logged. Held off while online: the
+online setup object `*(0xD98614)` `+0x18` (signed in) or `+0x21C == 1` (signing in), or the mode word `*(0xD64E18) +8`
+= 2 or 3; checked every 8th present. The decal actions: press, then press again within 8 s (`extras_core.h`,
+`make extrastest`); a kept backup `before-decals-...` (failure: nothing done); then in a race of one local player
+(the in-game controller `0xD66B24` check of `patch.cpp`), offline, with the achievement object as above, one id a
+frame: the next only after the game cleared `0xD71954`; an id not taken in 3 tries is skipped; online the byte is
+cleared and the work waits. Log lines `[extras]`: each switch on / off / held off, each backup, each decal id, the
+end count. Every byte is checked once to hold 0 or 1 on a writable page, else nothing is written.
+
 ### DLC test overlay (`overlay_dir`, `dlc_tracks`, `dlc_save_profile`; `src/overlay.cpp`): experimental
 
 For the DLC tests of SSPC-12 only (`docs/dlc-overlay.md`). `overlay_dir = <folder>` makes the game read a file from
@@ -1123,6 +1187,46 @@ folders are built from your own install by `tools/dlc/overlay_car_gate1.py` and 
 declares, and then the game keeps its save in a separate folder (`<Documents>\Split Second DLC profile\`) unless
 `dlc_save_profile = off`. Log lines `[overlay]`: the files the folder holds, the hooked import slots, each redirected
 file once, the track ids added.
+
+## Motion blur and picture switches (`src/picture.cpp`)
+
+`motion_blur = console` (default) multiplies the camera's blur amount (`[[this+0x14]+0x14]`) by the update rate / 30
+(at most 4) for each call of the blur pass 0x49B490, through its vtable slot 0xBB42B0, and puts the value back after
+it. While the stronger pass runs, quality.cpp's SetSamplerState hook (put in at start when fps is 60 or more) clamps
+U / V of samplers 0-7 to the edge, so the longer samples bring in no line at the bottom. `vignette` / `screen_gradient`
+wrap the colour grade pass 0x49A7A0 (slot 0xBB4048) and zero the vignette's U / V scale (+0x48 / +0x4C) or the
+gradient's alpha (+0x2C) for the call. `lens_flare = off` holds the tweakables 0xD10A3C and 0xD37D08 at 0,
+`explosion_shake = off` holds DisallowAllCameraShake 0xD8B4CC at 1 (a 50 ms watch; the game's value goes back when
+switched on). Bloom is not switched: the bloom pass 0x492F50 also tone maps the frame, which HDR and debanding work on.
+Log lines `[blur]`, `[picture]`.
+
+`motion_blur_quality = low | high` (default high, low with `SteamDeck=1`; `game` = the game's program;
+`src/mblur.cpp`, `src/blur_core.h`, SSPC-62) draws the pass with our own ps_3_0 shader. While BlurHook runs the pass on the render thread, a SetPixelShader hook (slot 107, chained with
+deband / shadowsmooth / lodfade through `ss_write_word`) looks at the bound program: a ps_3_0 program whose constant
+table names `MB_matMotion360` and `MB_motionBlurSourceImage` is one of the blur's five (fixed, lvl0/1/2/4). The table
+gives the registers (Steam build: matrices c96..c223, 32 row-major float4x4; `MB_motionBlurParams` c94, x = amount,
+y = speed / cut factor; `MB_viewportParams` c95, zw = texture coordinate to 0..1 viewport scale, xy its inverse;
+colour s10, its alpha = motion ID / 255; depth `deferred_lighting_DepthTex360` s3), our source is generated for them
+and compiled on shadercache's worker. The game's program (9 taps at uv + t * d, t = -1 .. +1 in quarters, d = the
+reprojected velocity of the pixel's motion ID x amount; a tap of another alpha is replaced by the centre) is kept
+for its inputs and its span; ours takes N = clamp(streak px / 4, min, cap) taps, jittered by interleaved gradient noise
+(animated over 64 frames only while TAA jitters), leaves out a tap of another motion ID that is nearer than the centre
+(soft compare of -log2(1 - depth), ID 0 counts as the centre), clamps every tap to the viewport and the texture, and
+averages the texture's own (sRGB-encoded) values as the game does. high: 8 .. 24, low: 6 .. 12; at QUALITY Very High
+(0xD0F7E8 = 3, 2x2 supersampling) high takes low's range. The noise offset and the range (y cap, w min) go into a
+float register no table entry uses (c93), so low and high are one compiled shader (one pipewarm record); its old
+value is put back after the pass. Until the compile is done, and for good when the table lacks
+something or the compile fails (one log line), the game's program draws. hdr.cpp's `Original()` maps ours back to
+the game's program (`ss_blur_original`); pipewarm records ours as maker 4 and makes it again at a level load
+(`ss_blur_variant`). Log lines `[blur]`. Test aids (not in the overlay; the env or the conf, the conf is the
+way on Windows, where the exe restarts itself without the env): `motion_blur_view` / `SS_MOTION_BLUR_VIEW` = 1 the
+motion ID, 2 the span, 3 the tap count in false colour instead of the blur; `motion_blur_timing` /
+`SS_MOTION_BLUR_TIMING` = true: timestamp queries around the pass, one line per 600 passes with the mean and worst
+GPU time, the level, the QUALITY level and the pass's `MB_motionBlurParams`.
+
+Findings from Glimpse-Fix (frankyfife, GPL-3.0; no code copied, each address checked again in the disassembly): the
+blur pass, its slot, the amount field, the frame-rate factor and the edge clamp; the grade pass with the vignette and
+gradient fields; the two lens flare switches; the explosion shake switch.
 
 ## Online (`src/online.cpp`, `tools/online/`)
 
@@ -1162,3 +1266,15 @@ parts:
   Limits of 1.0: races have run only between PCs on one home network (peer to peer; between different home routers
   untested, and the DLL has no tunnel to the relay port yet, plan section 4); private games with invitations are
   refused and the friends list is empty, so a race needs 3 players in a public lobby; no leaderboards.
+
+## Findings from Glimpse-Fix
+
+Glimpse-Fix (frankyfife, GPL-3.0) was read for findings only; no code was copied. Each address was then read again in
+the game's code before use.
+
+* Pop-in: the switch `Sectors/Visibility/Disable Visibility Map` 0xD9AFCC (its reader 0xAE6720), the particle LOD
+  distances 0xD373DC / 0xD373FC / 0xD3742C, debris 0xD193F0 (no reader found, not used), the entity stream distances
+  0xD9AFD4 / 0xD5FDDC and the power-play draw distances 0xD40A84 / 0xD40A8C and per-level list at `[0xD8B384]` (not
+  used: they stream more into the 57 MB pool).
+* Found by both: the visibility switches 0xD82788 and 0xD8B368, the streaming pool's tweakable, and the rule that the
+  game's code is never written.

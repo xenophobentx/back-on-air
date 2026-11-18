@@ -126,6 +126,10 @@ long __stdcall HkCreateVolume(void* device, const void* data, unsigned size, voi
 // Takes the import slot as soon as the protection's start-up has filled it with d3dx9's function, then watches it
 // for a minute and takes it again if it is filled once more (overlay.cpp does the same with its slots).
 DWORD WINAPI TextureThread(LPVOID) {
+  // The slot is filled about 1 s in while the protection still writes the rest of the import page: a write of ours
+  // then (its protection lifted and put back) can fault the protection's next write (Windows test PC 2026-11-17, H5: the boot
+  // crash SplitSecond.exe+0xE38B5D right after this slot's write, the relay's writes not yet made).
+  ss_import_table_wait("slip");
   const DWORD t0 = GetTickCount();
   volatile uintptr_t* slot = reinterpret_cast<volatile uintptr_t*>(kIatCreateVolumeFromMemory);
   bool done = false;

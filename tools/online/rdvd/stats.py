@@ -48,7 +48,8 @@ WEB = os.path.join(os.path.dirname(os.path.abspath(__file__)), "web")
 # server.counters that become day counts: counter -> field
 DELTAS = {"refused_full": "refused_full", "relay_datagrams": "relay_packets", "relay_bytes": "relay_bytes",
           "relay_registrations": "relay_registrations", "relay_dropped": "relay_dropped",
-          "relay_refused": "relay_refused", "relay_limited": "relay_limited"}
+          "relay_games": "relay_games", "relay_peer_answers": "relay_peer_answers"}
+DELTAS.update({"relay_drop_" + r: "relay_drop_" + r for r in ("bad", "tag", "member", "nodest", "rate", "full", "taken")})
 ALONE_BUCKETS = ((60, "lt1m"), (300, "lt5m"), (900, "lt15m"), (None, "ge15m"))
 HOST_LEFT_HOW = {"unregistered": "close", "owner registered another": "moved", "owner disconnected": "lost"}
 
@@ -133,13 +134,8 @@ class Stats:
         self.last_public = self.last_current = 0.0
         self.day = blank_day(utc_date(self.started))
         if stats_dir:
-            try:
-                os.makedirs(stats_dir, exist_ok=True)
-                self._load()
-            except Exception as e:             # a damaged or unreadable state starts the day afresh, not a restart loop
-                log.info("statistics state in %s not loaded (%s: %s); counting starts afresh", stats_dir, type(e).__name__, e)
-                self.history, self.seen, self.carry = [], set(), {}
-                self.day = blank_day(utc_date(self.started))
+            os.makedirs(stats_dir, exist_ok=True)
+            self._load()
         self.day["race_detect"] = self.day["race_detect"] or race_detect
 
     def bind(self, server):
@@ -155,19 +151,15 @@ class Stats:
             with open(self._path("daily.jsonl"), encoding="utf-8") as f:
                 for line in f:
                     try:
-                        day = json.loads(line)
+                        self.history.append(json.loads(line))
                     except ValueError:
-                        continue
-                    if isinstance(day, dict) and isinstance(day.get("date"), str):
-                        self.history.append(day)
+                        pass
         except FileNotFoundError:
             pass
         try:
             with open(self._path("current.json"), encoding="utf-8") as f:
                 cur = json.load(f)
         except (FileNotFoundError, ValueError):
-            return
-        if not isinstance(cur, dict) or not isinstance(cur.get("seen", []), list):
             return
         seen = cur.pop("seen", [])
         for k in ("sessions_now", "players_now"):
@@ -205,14 +197,11 @@ class Stats:
 
     def _rollover(self, date: str):
         self._sync()
-        done = self.day
-        # The new day first: a write that fails below (disk full) then loses that one line, and the next call does
-        # not append the same day again.
+        self._append_daily(self.day)
         self.day = blank_day(date)
         self.day["race_detect"] = self.race_detect
         self.seen, self.carry = set(), {}
         self.base = dict(self.server.counters) if self.server else {}
-        self._append_daily(done)
         self._write_history()
 
     def _check_day(self):

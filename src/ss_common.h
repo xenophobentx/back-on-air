@@ -12,4 +12,4 @@ long ss_pad_wrap_directinput(const void* riid, void** inout);
 // once the log is open. ss_exe_known: false when the exe is not the Steam build (nothing may be patched or hooked).
 bool ss_srccheck_run(void* self, bool conf_present, bool boxes, bool test_unknown);
 bool ss_exe_known();
-void ss_srccheck_modules(const char* when);
+std::string ss_srccheck_modules(const char* when);  // logs the known overlays (when: null, not logged); returns their short names

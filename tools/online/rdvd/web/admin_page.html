@@ -144,7 +144,7 @@ footer a { color: var(--ink2); }
 <div class="tip" id="tip"></div>
 <script>
 "use strict";
-const RELAY_DROP = [["relay_dropped", "malformed, unknown sender or not a member"], ["relay_refused", "refused (not in one game)"], ["relay_limited", "rate limit"]];
+const RELAY_DROP = [["relay_drop_bad", "malformed"], ["relay_drop_tag", "bad signature"], ["relay_drop_member", "not in one game, or unknown sender"], ["relay_drop_nodest", "receiver not registered"], ["relay_drop_rate", "rate limit"], ["relay_drop_full", "table full"], ["relay_drop_taken", "virtual address taken"]];
 const $ = id => document.getElementById(id);
 const fmt = n => (n == null || isNaN(n)) ? "–" : Math.round(n).toLocaleString("en-US");
 const css = v => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
@@ -366,11 +366,12 @@ function render() {
   {
     $("tRelay").innerHTML = `<div class="tiles">` + tile("packets relayed", fmt(tot("relay_packets"))) +
       tile("MB relayed", (tot("relay_bytes") / 1048576).toFixed(1)) + tile("players registered", fmt(tot("relay_registrations"))) +
-      tile("dropped", fmt(tot("relay_dropped") + tot("relay_refused") + tot("relay_limited"))) + `</div>` +
+      tile("games relayed", fmt(tot("relay_games"))) + tile("direct-try answers", fmt(tot("relay_peer_answers"))) +
+      tile("dropped", fmt(tot("relay_dropped"))) + `</div>` +
       `<table>${RELAY_DROP.map(([k, name]) => `<tr><td>${name}</td><td>${fmt(tot(k))}</td></tr>`).join("")}</table>`;
     chart($("cRelay"), labels, [
       {name: "packets relayed", color: S(1), values: sum("relay_packets")},
-      {name: "dropped", color: S(2), values: G.map(g => (g.sum.relay_dropped || 0) + (g.sum.relay_refused || 0) + (g.sum.relay_limited || 0))}], "line", {short});
+      {name: "dropped", color: S(2), values: sum("relay_dropped")}], "line", {short});
   }
   chart($("cReturn"), labels, [
     {name: gran === "day" ? "unique players" : "player-days", color: S(1), values: sum("unique_players")},

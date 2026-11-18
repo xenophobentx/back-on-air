@@ -1,6 +1,7 @@
 // Image quality and detail rows, with the port's keys, values and defaults (its settings catalogue):
 //   anisotropy     = game | off | 2 | 4 | 8 | 16   (game)     SS_ANISOTROPY
 //   draw_distance  = console | 1.5 | 2             (console)  SS_DRAW_DISTANCE
+//   visibility_lists = game | off                  (game)     SS_VISIBILITY_LISTS
 //   opponent_cars  = console | high (| pc)         (console)  SS_CAR_DETAIL
 //   shadow_distance = console | 1.5 | 2            (console)  SS_SHADOW_DISTANCE
 //   taa_lod_bias   = -2..0                          (-0.5)     SS_TAA_LOD_BIAS (this patch's own: aa = taa only)
@@ -9,6 +10,7 @@
 //   * slot 69 (SetSamplerState) of the D3D9 device's vtable, which lives in d3d9.dll's memory (DXVK or wined3d), the
 //     same way patch.cpp takes slot 17 (Present). The game's own sampler function (0x516A80) calls the device through
 //     that slot ([vtable+0x114]) for every state of a sampler;
+//     it also clamps U / V addressing while the motion blur pass runs stronger than the game's (picture.cpp);
 //   * float / int tunables in the game's writable data (.data): the scenery LOD distances and the opponent cars' LOD
 //     rule (PlayerLOD). The game reads them where they are every frame (sector LOD choice 0x7C1BD0, fades 0x7C21C0,
 //     second pass 0x7C5570; car LOD assignment around 0x7B0700) and its params loader writes them through the tweak
@@ -179,7 +181,17 @@ void Follow(void* dev, DWORD sampler, DWORD type, DWORD value, DWORD& sent) {
   sent = SUCCEEDED(Put(dev, sampler, type, value)) ? value : kUnsent;
 }
 
+// The motion blur pass's edge clamp (picture.cpp, ss_quality_edge_clamp): while it runs, the title's U / V addressing
+// of samplers 0-7 is noted and the device gets CLAMP; the noted values go back when it ends.
+volatile bool g_edge_clamp = false;
+bool g_clamp_hook = false;  // the hook went in for it (ss_picture_clamp_wanted at start)
+DWORD g_clamp_want[8][2];
+
 long __stdcall SetSamplerHook(void* dev, DWORD sampler, DWORD type, DWORD value) {
+  if (g_edge_clamp && sampler < 8 && (type == D3DSAMP_ADDRESSU || type == D3DSAMP_ADDRESSV) && ss_own_drawing == 0) {
+    g_clamp_want[sampler][type - D3DSAMP_ADDRESSU] = value;
+    return g_sampler_orig(dev, sampler, type, D3DTADDRESS_CLAMP);
+  }
   const int i = SamplerIndex(sampler);
   if (i < 0 || !(type == kMag || type == kMin || type == kMip || type == kBias || type == kMaxAniso) || ss_own_drawing != 0)
     return g_sampler_orig(dev, sampler, type, value);
@@ -291,7 +303,7 @@ void InstallSamplerHook() {
   char name[MAX_PATH] = "?";
   GetModuleFileNameA(owner, name, sizeof name);
   ss_log("[aniso] SetSamplerState hooked in %s (device %p, vtable %p); %s", name, reinterpret_cast<void*>(dev), vt,
-         g_aniso == 0   ? "the game's own filter states (hooked for TAA's texture LOD bias)"
+         g_aniso == 0   ? "the game's own filter states (hooked for TAA's texture LOD bias or the motion blur's edge clamp)"
          : g_aniso == 1 ? "no anisotropic filtering"
                         : "every linear-filtered sampler with mips on a mipped 2D texture anisotropic, none on other textures");
 }
@@ -363,6 +375,26 @@ constexpr Scenery kScenery[] = {
 // with the title's distance fades.
 constexpr uintptr_t kNoVisibilityCaps = 0xD82788, kNoVisibilityCapsSite = 0xB81330;
 
+// Sectors/Visibility/Disable Visibility Map (bool, registered at 0xB937E0; found by Glimpse-Fix). The visibility map
+// object ([sector manager+0x25B8]) keeps each view's cell; set, 0xAE6430 leaves every view's cell at -1 and 0xAE6720
+// answers "visible" for every entity at once. Read in the code: the cell at -1 also gives every sector LOD cap 3
+// (0x7C1CEA, 0x7C5756), and the view's draw (0x7C374F) no longer takes the seclusion-zone path, so nothing inside the
+// frustum is held back by the precomputed visibility (the bushes of lod-shadow.md section 10). 0xAE6720's callers are
+// the dynamic things: the opponents (0xAC2A5F, with 0xD9A690), the power plays (0x81381C) and four other draw lists.
+// Cost: no occlusion culling (more draws) and more full meshes asked of the streaming pool. Set once at start and
+// never cleared: while it is set the map does not keep the entities' cells (0xAE65A0 returns at once), so clearing it
+// in a level would cull by stale cells. visibility_lists = off sets it with the two switches above at any distance.
+constexpr uintptr_t kNoVisibilityMap = 0xD9AFCC, kNoVisibilityMapSite = 0xB937E0;
+
+// Particles (registered at 0xB7F212 / 0xB7F2B2). 0x7D1D90 copies the set for the frame (the split-screen set, or
+// quality LOW, otherwise this one) and 0x7CF960 scales a system's emission by its distance d: max((D - d) / D, floor)
+// below the LOD distance D (150 m, floor 0.5 / 0.75), the floor beyond it, 0.4 / 0.5 beyond the further distance
+// (200 m), and d / 30 m nearer than the kill distance (a near thinning, not a far cull; left alone). Above console
+// draw distance both distances take the factor: smoke and sparks thin out farther away. More particles drawn.
+// Debris/FadeInDist (0xD193F0) is not read anywhere in the image (only its registration): left alone.
+constexpr uintptr_t kParticleLod = 0xD373DC, kParticleLodSite = 0xB7F212;
+constexpr uintptr_t kParticleFurther = 0xD373FC, kParticleFurtherSite = 0xB7F2B2;
+
 // PlayerLOD (registered at 0xB807B4..0xB80A24). The PC loads Resident Generic/Params/PlayerLOD_ps3.params (string
 // at 0xC17B50), the console PlayerLOD_xenon.params. They differ in two rows: MaxAIMidLODs 3 (PC) / 31 (console),
 // AIMidToFar 100 / 200 m; the rest is equal (MaxAINearLODs 2, AINearToMid 20, AIFarToOff 300). So the PC draws the
@@ -422,6 +454,7 @@ Tunable g_tun[24];
 int g_ntun = 0;
 bool g_caps_off = false;
 double g_draw_distance = 1.0;
+bool g_map_off = false;  // visibility_lists = off
 
 void Add(uintptr_t va, uintptr_t site, const char* name, bool is_int, Rule rule, double arg) {
   if (g_ntun >= 24) return;
@@ -506,6 +539,10 @@ double WantFactor(const char* env, const char* key) {
   return d;
 }
 double WantDrawDistance() { return WantFactor("SS_DRAW_DISTANCE", "draw_distance"); }
+bool WantMapOff() {
+  const std::string v = Setting("SS_VISIBILITY_LISTS", "visibility_lists");
+  return v == "off" || v == "false" || v == "0";
+}
 
 // ------------------------------------------------------------------ shadow distance: the cascade fit
 
@@ -682,31 +719,41 @@ int WantCarDetail() {
 }
 
 DWORD WINAPI QualityWorker(LPVOID) {
-  if (!ss_conf_present() && !getenv("SS_ANISOTROPY") && !getenv("SS_DRAW_DISTANCE") && !getenv("SS_CAR_DETAIL") &&
-      !getenv("SS_SHADOW_DISTANCE") && !getenv("SS_TEST_QUALITY"))
+  if (!ss_conf_present() && !getenv("SS_ANISOTROPY") && !getenv("SS_DRAW_DISTANCE") && !getenv("SS_VISIBILITY_LISTS") &&
+      !getenv("SS_CAR_DETAIL") && !getenv("SS_SHADOW_DISTANCE") && !getenv("SS_TEST_QUALITY"))
     return 0;  // no conf file: the DLL does nothing, as for the frame rate
   g_aniso = WantAnisotropy();
   g_lod_bias = ParseLodBias(Setting("SS_TAA_LOD_BIAS", "taa_lod_bias"));
   const std::string aa = Setting("SS_AA", "aa");
   const bool taa = aa == "taa" || aa == "taa_high";
   g_bias_hook = taa && g_lod_bias != 0.0f;
+  g_clamp_hook = ss_picture_clamp_wanted();
   if (taa)
     ss_log("[taa] texture LOD bias %.2f on the game's mip-mapped samplers while TAA jitters the camera%s", g_lod_bias,
            g_lod_bias == 0.0f ? " (off)" : "");
   g_draw_distance = WantDrawDistance();
+  g_map_off = WantMapOff();
   const int cars = WantCarDetail();
   const double shadow = WantFactor("SS_SHADOW_DISTANCE", "shadow_distance");
-  ss_log("[detail] anisotropy %s, draw_distance %s (x%.2f), opponent_cars %s, shadow_distance %s (x%.2f)",
-         g_aniso == 0 ? "game" : g_aniso == 1 ? "off" : std::to_string(g_aniso).c_str(),
-         g_draw_distance == 1.0 ? "console" : "raised", g_draw_distance,
+  const bool raised = g_draw_distance > 1.0;
+  ss_log("[detail] anisotropy %s, draw_distance %s (x%.2f: scenery, props, opponents' off distance, particles), "
+         "visibility_lists %s (%s), opponent_cars %s, shadow_distance %s (x%.2f)",
+         g_aniso == 0 ? "game" : g_aniso == 1 ? "off" : std::to_string(g_aniso).c_str(), raised ? "raised" : "console",
+         g_draw_distance, g_map_off ? "off" : "game",
+         g_map_off ? "visibility map, its LOD caps and the power plays' check off: drawn by distance, no occlusion culling"
+         : raised  ? "the map's LOD caps and the power plays' check off, the map itself kept"
+                   : "the game's",
          cars == 0 ? "pc" : cars == 1 ? "console" : "high", shadow == 1.0 ? "console" : "raised", shadow);
 
-  if (g_draw_distance != 1.0) {
+  if (raised) {
     for (const Scenery& s : kScenery) Add(s.va, s.site, s.name, false, Rule::kScale, g_draw_distance);
-    g_caps_off = g_draw_distance > 1.0;
     Add(kAiFarToOff, kAiFarToOffSite, "AIFarToOff", false, Rule::kScale, g_draw_distance);
     Add(kNemTruckFarToOff, kNemTruckFarToOffSite, "NemTruckFarToOff", false, Rule::kScale, g_draw_distance);
+    Add(kParticleLod, kParticleLodSite, "particles' LOD distance", false, Rule::kScale, g_draw_distance);
+    Add(kParticleFurther, kParticleFurtherSite, "particles' further LOD distance", false, Rule::kScale, g_draw_distance);
   }
+  g_caps_off = raised || g_map_off;
+  if (g_map_off) Add(kNoVisibilityMap, kNoVisibilityMapSite, "visibility map off", true, Rule::kSet, 1);
   if (cars >= 1) {
     Add(kMaxAiMid, kMaxAiMidSite, "MaxAIMidLODs", true, Rule::kSet, kConsoleMaxAiMid);
     Add(kAiMidToFar, kAiMidToFarSite, "AIMidToFar", false, Rule::kSet, kConsoleAiMidToFar);
@@ -725,9 +772,9 @@ DWORD WINAPI QualityWorker(LPVOID) {
   const std::string smoothing = Setting("SS_LOD_SMOOTHING", "lod_smoothing");
   // lod_smoothing: no key is on (lodfade.cpp's default).
   const bool props = g_draw_distance > 1.0 || !(smoothing == "off" || smoothing == "false" || smoothing == "0");
-  if (g_draw_distance > 1.0)
+  if (g_caps_off)
     Add(kPowerplayNoVisibility, kPowerplayNoVisibilitySite, "power plays off the visibility map", true, Rule::kSet, 1);
-  if (g_aniso == 0 && g_ntun == 0 && shadow == 1.0 && !props && !g_bias_hook) return 0;  // all at the game's own values: nothing is touched
+  if (g_aniso == 0 && g_ntun == 0 && shadow == 1.0 && !props && !g_bias_hook && !g_clamp_hook) return 0;  // all at the game's own values: nothing is touched
 
   // Wait for the image to be unpacked and the tweaks registered; reads only until then.
   bool ready = g_ntun == 0;
@@ -772,7 +819,7 @@ DWORD WINAPI QualityWorker(LPVOID) {
     ss_log("[detail] sun shadow x%.2f: the shadow classes' compare, set-up and fit wrapped: 0xC314DC %s, 0xC31944 %s", shadow,
            a ? "yes" : "NO (not the known build's slots)", b ? "yes" : "NO (not the known build's slots)");
   }
-  if (g_aniso == 0 && g_ntun == 0 && !g_bias_hook) return 0;
+  if (g_aniso == 0 && g_ntun == 0 && !g_bias_hook && !g_clamp_hook) return 0;
 
   DWORD hooked_at = 0;
   bool counted = false;
@@ -780,7 +827,7 @@ DWORD WINAPI QualityWorker(LPVOID) {
   const bool rate_log = !fl.empty() && !(fl == "0" || fl == "false" || fl == "no" || fl == "off");
   DWORD rate_at = 0;
   LONG r_calls = 0, r_sent = 0, r_skipped = 0, r_tex = 0, r_kind = 0;
-  const bool hook = g_aniso != 0 || g_bias_hook;  // as at start: the settings menu may set game later, the hook stays (passing through)
+  const bool hook = g_aniso != 0 || g_bias_hook || g_clamp_hook;  // as at start: the settings menu may set game later, the hook stays (passing through)
   for (;;) {
     if (g_ntun) ApplyTunables();
     if (hook) {
@@ -828,6 +875,22 @@ void ss_quality_scene_end(void* device) {
   if (!g_scene_bias || !g_sampler_orig || !device) return;
   g_scene_bias = false;
   SendBiases(device);
+}
+
+// picture.cpp's motion blur wrapper (render thread), around the game's pass: false when the hook is not in.
+bool ss_quality_edge_clamp(bool on) {
+  if (!g_sampler_orig || on == g_edge_clamp) return g_sampler_orig != nullptr;
+  const uintptr_t r = Rd(kRenderer);
+  IDirect3DDevice9* d = r ? reinterpret_cast<IDirect3DDevice9*>(Rd(r + kRendererDevice)) : nullptr;
+  if (!d) return false;
+  for (DWORD s = 0; s < 8; ++s)
+    for (DWORD k = 0; k < 2; ++k) {
+      const D3DSAMPLERSTATETYPE t = k ? D3DSAMP_ADDRESSV : D3DSAMP_ADDRESSU;
+      if (on && FAILED(d->GetSamplerState(s, t, &g_clamp_want[s][k]))) g_clamp_want[s][k] = D3DTADDRESS_WRAP;
+      g_sampler_orig(d, s, t, on ? static_cast<DWORD>(D3DTADDRESS_CLAMP) : g_clamp_want[s][k]);
+    }
+  g_edge_clamp = on;
+  return true;
 }
 
 void ss_quality_start() { CreateThread(nullptr, 0, QualityWorker, nullptr, 0, nullptr); }

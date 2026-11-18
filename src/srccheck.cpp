@@ -130,11 +130,14 @@ bool UnderWine() {
   return nt && GetProcAddress(nt, "wine_get_version");
 }
 
+std::string g_system = "Windows";  // for the [summary] block (diag.cpp)
+
 void LogSystem() {
   HMODULE nt = GetModuleHandleA("ntdll.dll");
   using WineVer = const char*(CDECL*)();
   if (auto wv = nt ? reinterpret_cast<WineVer>(GetProcAddress(nt, "wine_get_version")) : nullptr) {
     ss_log("[srccheck] system: Wine / Proton %s", wv());
+    g_system = std::string("Wine / Proton ") + wv();
     return;
   }
   using RtlVer = LONG(WINAPI*)(OSVERSIONINFOW*);
@@ -151,6 +154,7 @@ void LogSystem() {
   sz = sizeof build;
   RegGetValueA(HKEY_LOCAL_MACHINE, key, "CurrentBuildNumber", RRF_RT_REG_SZ, nullptr, build, &sz);
   const bool shim = major && (v.dwMajorVersion != major || v.dwMinorVersion != minor);
+  g_system = std::string("Windows build ") + build;
   ss_log("[srccheck] system: Windows %lu.%lu build %s%s%lu.%lu build %lu%s", major, minor, build,
          shim ? " (the game is told " : " (", v.dwMajorVersion, v.dwMinorVersion, v.dwBuildNumber,
          shim ? ": a compatibility shim, from Windows or a compatibility mode)" : ")");
@@ -198,19 +202,28 @@ std::string Short(const std::string& sha) { return sha.empty() ? "(no hash)" : s
 
 bool ss_exe_known() { return g_known; }
 
-void ss_srccheck_modules(const char* when) {
-  std::string found;
+std::string ss_srccheck_modules(const char* when) {
+  std::string found, names;
+  auto add = [&](const std::string& line, std::string name) {
+    // The short name is cut at the first "(" or ",": drop the space before it, or the list reads "Server , ...".
+    while (!name.empty() && name.back() == ' ') name.pop_back();
+    found += (found.empty() ? "" : ", ") + line;
+    names += (names.empty() ? "" : ", ") + name;
+  };
   for (const Module& m : kModules)
-    if (GetModuleHandleA(m.name)) found += std::string(found.empty() ? "" : ", ") + m.name + " (" + m.what + ")";
+    if (GetModuleHandleA(m.name)) add(std::string(m.name) + " (" + m.what + ")", std::string(m.what, strcspn(m.what, "(,")));
   // ReShade or Special K loaded under a system DLL's name: known by an export of theirs.
   for (const char* dll : {"d3d9.dll", "dxgi.dll", "dinput8.dll", "winmm.dll", "version.dll", "dsound.dll"}) {
     HMODULE m = GetModuleHandleA(dll);
     if (!m) continue;
-    if (GetProcAddress(m, "ReShadeRegisterAddon")) found += std::string(found.empty() ? "" : ", ") + dll + " is ReShade";
-    if (GetProcAddress(m, "SK_GetDLLVersionStr")) found += std::string(found.empty() ? "" : ", ") + dll + " is Special K";
+    if (GetProcAddress(m, "ReShadeRegisterAddon")) add(std::string(dll) + " is ReShade", "ReShade");
+    if (GetProcAddress(m, "SK_GetDLLVersionStr")) add(std::string(dll) + " is Special K", "Special K");
   }
-  ss_log("[srccheck] overlay / injector modules %s: %s", when, found.empty() ? "none of the known ones" : found.c_str());
+  if (when) ss_log("[srccheck] overlay / injector modules %s: %s", when, found.empty() ? "none of the known ones" : found.c_str());
+  return names;  // the short names ("Steam overlay, Discord overlay"), "" when none
 }
+
+std::string ss_srccheck_system() { return g_system; }
 
 bool ss_srccheck_run(void* self_module, bool conf_present, bool boxes, bool test_unknown) {
   wchar_t buf[MAX_PATH * 2];

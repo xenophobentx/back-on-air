@@ -510,6 +510,9 @@ bool InWindowsDir(const char* path) {
 
 bool TenBitUseless(IDirect3D9* d3d) {
   if (UnderWine()) return false;
+  // Not DXVK on Windows: Windows' own d3d9, whichever module holds the IDirect3D9 vtable (with the Steam overlay that
+  // is gameoverlayrenderer.dll, outside the Windows folder, and the path test alone missed it).
+  if (!ss_renderer_dxvk()) return true;
   char path[MAX_PATH];
   return D3d9Path(d3d, path, sizeof path) && InWindowsDir(path);
 }
@@ -517,8 +520,8 @@ bool TenBitUseless(IDirect3D9* d3d) {
 // One [display] adapter line per run, at the game's CreateDevice: the GPU (vendor by PCI vendor ID, name, device ID),
 // its driver as the d3d9 reports it, which d3d9 draws, and the vendor driver modules loaded by then. Nothing here
 // changes behaviour (no feature depends on the vendor); it is so a tester's log says what it ran on. Under DXVK the
-// name and IDs are the Vulkan device's (a dxvk.conf customVendorId / customDeviceId shows here too), the driver
-// version is the one DXVK reports; the module list is the cross-check.
+// name and IDs are the Vulkan device's (a dxvk.conf customVendorId / customDeviceId shows here too); DXVK's driver
+// version is made up (32767.65535...), so the Vulkan ICD's file version stands for the driver there.
 const char* VendorName(DWORD id) {
   switch (id) {
     case 0x10DE: return "NVIDIA";
@@ -541,32 +544,51 @@ void LogAdapter(IDirect3D9* d3d, UINT adapter) {
                       : ss_renderer_dxvk()         ? "DXVK"
                       : have_path && InWindowsDir(path) ? "Windows' own d3d9"
                                                    : "a d3d9 outside the Windows folder";
-  // Vendor driver modules (32-bit names): D3D9 user-mode drivers, Vulkan ICDs, Microsoft's D3D9-on-12 layer.
+  // Vendor driver modules (32-bit names): D3D9 user-mode drivers, Vulkan ICDs, Microsoft's D3D9-on-12 layer. A
+  // Vulkan ICD's file version is the real driver's (under DXVK the adapter's own driver version is a made-up one).
   static const char* const kDrivers[] = {"nvd3dum.dll",  "nvoglv32.dll", "nvwgf2um.dll", "aticfx32.dll", "amdvlk32.dll",
-                                         "amdxc32.dll",  "igdumdim32.dll", "igvk32.dll", "d3d9on12.dll"};
-  std::string mods;
-  for (const char* d : kDrivers)
-    if (GetModuleHandleA(d)) mods += mods.empty() ? d : std::string(", ") + d;
+                                         "amd-vulkan32.dll", "amdxc32.dll",  "igdumdim32.dll", "igvk32.dll", "d3d9on12.dll"};
+  std::string mods, driver;
+  for (const char* d : kDrivers) {
+    const HMODULE m = GetModuleHandleA(d);
+    if (!m) continue;
+    mods += mods.empty() ? d : std::string(", ") + d;
+    unsigned v[4];
+    const bool icd = !strcmp(d, "nvoglv32.dll") || !strcmp(d, "amdvlk32.dll") || !strcmp(d, "amd-vulkan32.dll") || !strcmp(d, "igvk32.dll");
+    if (!icd || !ss_file_version(m, v)) continue;
+    char b[64], nv[24] = "";
+    snprintf(b, sizeof b, "%u.%u.%u.%u", v[0], v[1], v[2], v[3]);
+    if (!strcmp(d, "nvoglv32.dll")) {  // 32.0.15.9124 is NVIDIA 591.24: the last five digits
+      const unsigned n = (v[2] % 10) * 10000 + v[3];
+      snprintf(nv, sizeof nv, "%u.%02u", n / 100, n % 100);
+    }
+    mods += std::string(" ") + b + (*nv ? std::string(" (NVIDIA ") + nv + ")" : "");
+    if (driver.empty()) driver = *nv ? nv : std::string(d) + " " + b;
+  }
   D3DADAPTER_IDENTIFIER9 id;
   memset(&id, 0, sizeof id);
   const HRESULT hr = d3d->GetAdapterIdentifier(adapter, 0, &id);
   if (FAILED(hr)) {
     ss_log("[display] adapter %u: GetAdapterIdentifier failed (0x%08lx); d3d9: %s (%s); driver modules: %s", adapter,
            static_cast<unsigned long>(hr), which, have_path ? path : "?", mods.empty() ? "none known" : mods.c_str());
+    ss_diag_gpu("", 0, driver.c_str());
     return;
   }
   id.Description[sizeof id.Description - 1] = 0;
   id.Driver[sizeof id.Driver - 1] = 0;
   const DWORD hi = static_cast<DWORD>(id.DriverVersion.HighPart), lo = id.DriverVersion.LowPart;
-  ss_log("[display] adapter %u: %s (vendor 0x%04lX, device 0x%04lX), \"%s\", driver %s %lu.%lu.%lu.%lu; d3d9: %s (%s); "
-         "driver modules: %s",
-         adapter, VendorName(id.VendorId), static_cast<unsigned long>(id.VendorId), static_cast<unsigned long>(id.DeviceId),
-         id.Description, id.Driver[0] ? id.Driver : "?", static_cast<unsigned long>(HIWORD(hi)),
-         static_cast<unsigned long>(LOWORD(hi)), static_cast<unsigned long>(HIWORD(lo)), static_cast<unsigned long>(LOWORD(lo)),
-         which, have_path ? path : "?", mods.empty() ? "none known" : mods.c_str());
-  if (id.VendorId == 0x10DE && !UnderWine() && ss_renderer_dxvk())
-    ss_log("[display] NVIDIA with DXVK on Windows has never been measured: if a race load crashes or the picture "
-           "sticks, vm_log = 30 shows the 2 GB address space; renderer = native is the fallback (README, NVIDIA)");
+  // DXVK (and Wine) report a driver name and version of their own (nvd3dum.dll 32767.65535...): left out there.
+  char own[160] = "";
+  const bool made_up = UnderWine() || ss_renderer_dxvk();
+  if (!made_up) {
+    snprintf(own, sizeof own, ", driver %s %lu.%lu.%lu.%lu", id.Driver[0] ? id.Driver : "?", static_cast<unsigned long>(HIWORD(hi)),
+             static_cast<unsigned long>(LOWORD(hi)), static_cast<unsigned long>(HIWORD(lo)), static_cast<unsigned long>(LOWORD(lo)));
+    if (driver.empty()) driver = own + 9;
+  }
+  ss_log("[display] adapter %u: %s (vendor 0x%04lX, device 0x%04lX), \"%s\"%s; d3d9: %s (%s); driver modules: %s", adapter,
+         VendorName(id.VendorId), static_cast<unsigned long>(id.VendorId), static_cast<unsigned long>(id.DeviceId), id.Description,
+         own, which, have_path ? path : "?", mods.empty() ? "none known" : mods.c_str());
+  ss_diag_gpu(id.Description, id.VendorId, driver.c_str());
 }
 
 HRESULT WINAPI HookCreateDevice(IDirect3D9* d3d, UINT adapter, D3DDEVTYPE type, HWND focus, DWORD flags,
@@ -614,6 +636,7 @@ HRESULT WINAPI HookCreateDevice(IDirect3D9* d3d, UINT adapter, D3DDEVTYPE type, 
     g_hwnd = win;
     if (g_mode != WM_FULLSCREEN) LayOutWindow(win, mine.BackBufferWidth, mine.BackBufferHeight);
     Subclass(focus ? focus : win);
+    ss_diag_device(win);  // diag.cpp: Windows HDR, the window, DXVK's swap chain, the [summary] block (its own thread)
   }
   *out = dev;  // only now: the game stores it straight into renderer+0x578
   return hr;
@@ -791,6 +814,8 @@ void ss_display_start() {
          vsync ? "; vsync: the device presents on the vblank (frame_pacing)" : fastest ? "; the device presents at once (frame_pacing = fastest)" : "");
   CreateThread(nullptr, 0, DisplayThread, nullptr, 0, nullptr);
 }
+
+const char* ss_display_window_mode() { return kModeName[g_mode]; }  // diag.cpp
 
 // The settings menu (menu.cpp): pause_on_focus_loss at once while the window procedure is subclassed (it is only
 // when the key was false at start); otherwise false (RESTART NEEDED). window_mode is restart-only (the device is made

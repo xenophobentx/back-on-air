@@ -893,7 +893,8 @@ void RebuildClassHash() {
   }
 }
 // The game's shader behind a variant another part binds in its place: shadow smoothing's (a shader that reads the
-// cascades), LOD smoothing's dither variant (a fading draw) and deband's (the tone mapper, the grade), one made of another.
+// cascades), LOD smoothing's dither variant (a fading draw), deband's (the tone mapper, the grade) and mblur's (the motion
+// blur), one made of another.
 // The answers are kept by shader address (direct-mapped), so a SetPixelShader costs one compare instead of up to six
 // hash-map lookups (SSPC-17, perf-plan A5). The two maps only ever gain entries, and every insertion bumps
 // ss_shader_map_gen, which empties the cache; so does a Reset. Same thread as the maps (the game's render thread).
@@ -915,7 +916,7 @@ IDirect3DPixelShader9* Original(IDirect3DPixelShader9* ps) {
   if (e.ps == ps) return e.o;
   IDirect3DPixelShader9* const key = ps;
   for (int i = 0; i < 3 && ps; ++i) {
-    IDirect3DPixelShader9* o = static_cast<IDirect3DPixelShader9*>(ss_deband_original(ss_lodfade_original(ss_shadowsmooth_original(ps))));
+    IDirect3DPixelShader9* o = static_cast<IDirect3DPixelShader9*>(ss_blur_original(ss_deband_original(ss_lodfade_original(ss_shadowsmooth_original(ps)))));
     if (o == ps) break;
     ps = o;
   }
@@ -2520,6 +2521,7 @@ IHdrSwapchain* Extension(IDirect3DDevice9* d) {
 float g_display_peak = 0.0f;  // what the swap chain says of the display (0: not known)
 float g_display_fall = 0.0f;  // its full frame level (0: not known)
 bool g_described = false, g_no_ext = false;
+bool g_offered = false;       // the swap chain offered HDR10 when last asked (diag.cpp's [summary])
 bool g_cs_dirty = false;      // a Reset happened: colour space and metadata are set again
 float g_md_peak = 0, g_md_fall = 0;  // the metadata last sent
 uint32_t g_next_try = 0;      // the frame at which HDR10 is asked for again
@@ -2575,6 +2577,7 @@ void Describe(IDirect3DDevice9* d) {
     return;
   }
   const BOOL offered = ext->CheckColorSpaceSupport(kCsHdr10);
+  g_offered = offered != FALSE;
   HdrOutputDesc od = {};
   const HRESULT hr = ext->GetCurrentOutputDesc(&od);
   ss_log("[hdr] DXVK's swap chain extension is there; HDR10 ST 2084 %s; display (0x%08lx): %.2f to %.0f nits, full frame %.0f",
@@ -2592,6 +2595,7 @@ void Deactivate(IDirect3DDevice9* d, const char* why) {
     ext->Release();
   }
   ss_log("[hdr] HDR10 off (%s): swap chain back to sRGB (0x%08lx)", why, static_cast<unsigned long>(hr));
+  ss_diag_hdr_event(false);
 }
 
 void TryActivate(IDirect3DDevice9* d) {
@@ -2599,7 +2603,8 @@ void TryActivate(IDirect3DDevice9* d) {
   if (g_no_ext) return;
   IHdrSwapchain* ext = Extension(d);
   if (!ext) return;
-  if (ext->CheckColorSpaceSupport(kCsHdr10)) {
+  g_offered = ext->CheckColorSpaceSupport(kCsHdr10) != FALSE;
+  if (g_offered) {
     HdrOutputDesc od = {};
     if (SUCCEEDED(ext->GetCurrentOutputDesc(&od)) && od.maxLuminance >= 200.0f && od.maxLuminance <= 10000.0f) {
       g_display_peak = od.maxLuminance;
@@ -2612,10 +2617,12 @@ void TryActivate(IDirect3DDevice9* d) {
       g_md_peak = g_md_fall = 0;
       float peak, paper, hud;
       Levels(&peak, &paper, &hud);
-      ss_log("[hdr] HDR10 on: swap chain colour space ST 2084 (0x%08lx); the display's peak %s%.0f nits; peak %.0f, paper white %.0f, HUD %.0f nits",
+      ss_log("[hdr] HDR10 on: swap chain colour space ST 2084 (0x%08lx); the display's peak %s%.0f nits; peak %.0f, paper white %.0f, HUD %.0f nits; "
+             "present: %s",
              static_cast<unsigned long>(hr), g_display_peak > 0 ? "" : "not known, taken as ", g_display_peak > 0 ? g_display_peak : 1000.0f, peak,
-             paper, hud);
+             paper, hud, ss_diag_present_text().c_str());
       SetMetadata(ext, true);
+      ss_diag_hdr_event(true);  // diag.cpp: Windows HDR, the window and DXVK's swap chain a second later, off this thread
     } else {
       static int said = 0;
       if (said++ < 3) ss_log("[hdr] SetColorSpace(HDR10 ST 2084) failed (0x%08lx); the SDR picture", static_cast<unsigned long>(hr));
@@ -2843,6 +2850,7 @@ void Present(IDirect3DDevice9* d) {
         if (g_cs_dirty) {  // after a Reset: DXVK keeps both; setting them again costs nothing
           const HRESULT hr = ext->SetColorSpace(kCsHdr10);
           ss_log("[hdr] after a device reset: swap chain colour space ST 2084 set again (0x%08lx)", static_cast<unsigned long>(hr));
+          ss_diag_hdr_event(SUCCEEDED(hr));
           if (FAILED(hr)) {  // no longer offered: the SDR picture, and asked for again later
             ext->SetColorSpace(kCsSrgb);
             g_active = false;
@@ -2995,14 +3003,14 @@ float Number(const char* env, const char* key, float fallback) {
 // the Direct3D object is made, after this. The key does nothing under Wine / Proton and nothing for a window that
 // does not cover the screen. Left alone where the player set allowFse (DXVK_CONFIG, DXVK_CONFIG_FILE, or a dxvk.conf
 // in the game folder), and on other vendors' GPUs, where HDR works without it.
+const char* g_allowfse = "not set";  // for diag.cpp's present line and [summary]
+
 void AllowFullScreenOnNvidia() {
   const HMODULE nt = GetModuleHandleA("ntdll.dll");
-  if (nt && GetProcAddress(nt, "wine_get_version")) return;
-  bool nvidia = false;
-  DISPLAY_DEVICEA dd = {};
-  dd.cb = sizeof dd;
-  for (DWORD i = 0; !nvidia && EnumDisplayDevicesA(nullptr, i, &dd, 0); ++i) nvidia = strstr(dd.DeviceID, "VEN_10DE") != nullptr;
-  if (!nvidia) return;
+  if (nt && GetProcAddress(nt, "wine_get_version")) {
+    g_allowfse = "not used (Wine / Proton)";
+    return;
+  }
   char cur[2048] = "", file[MAX_PATH] = "";
   if (GetEnvironmentVariableA("DXVK_CONFIG", cur, sizeof cur) >= sizeof cur) return;
   bool set = strstr(cur, "allowFse") != nullptr;
@@ -3013,18 +3021,32 @@ void AllowFullScreenOnNvidia() {
     for (char line[512]; !set && fgets(line, sizeof line, f);) set = line[strspn(line, " \t")] != '#' && strstr(line, "allowFse");
     fclose(f);
   }
+  if (set) g_allowfse = "set by the player";
+  bool nvidia = false;
+  DISPLAY_DEVICEA dd = {};
+  dd.cb = sizeof dd;
+  for (DWORD i = 0; !nvidia && EnumDisplayDevicesA(nullptr, i, &dd, 0); ++i) nvidia = strstr(dd.DeviceID, "VEN_10DE") != nullptr;
+  if (!nvidia) return;
   if (set) {
     ss_log("[hdr] NVIDIA on Windows: dxvk.allowFse is set by the player: kept");
     return;
   }
   const std::string nv = std::string(cur) + (*cur ? ";" : "") + "dxvk.allowFse = True";
   SetEnvironmentVariableA("DXVK_CONFIG", nv.c_str());
+  g_allowfse = "True (set by the patch)";
   ss_log("[hdr] NVIDIA on Windows: DXVK_CONFIG = %s (the driver shows an HDR10 picture only with exclusive full screen allowed)", nv.c_str());
 }
 
 }  // namespace
 
 // ------------------------------------------------------------------------------------------------------ hook-ups
+
+// The game draws with Windows' own d3d9 (renderer = native, or no DXVK to route to): no HDR output through it.
+// Proton's d3d9 is DXVK.
+static bool WindowsD3d9() {
+  HMODULE nt = GetModuleHandleA("ntdll.dll");
+  return !(nt && GetProcAddress(nt, "wine_get_version")) && !ss_renderer_dxvk();
+}
 
 void ss_hdr_start() {
   ss_hdr_probe_start();
@@ -3039,6 +3061,9 @@ void ss_hdr_start() {
     return;
   }
   g_on = on ? 1 : 0;
+  if (WindowsD3d9())
+    ss_log("[hdr] HDR is off: the game draws with Windows' own d3d9 (renderer = native), which cannot output HDR; "
+           "HDR needs renderer = dxvk");
   AllowFullScreenOnNvidia();
   g_force = IsOn(Setting("SS_HDR_FORCE", "hdr_force"));
   g_peak = Number("SS_HDR_PEAK", "hdr_peak", 0.0f);
@@ -3202,8 +3227,14 @@ void ss_hdr_present(void* device) {
 bool ss_hdr_test_lost() { return g_test_lost != 0; }
 
 // menu.cpp, when the overlay opens: the HDR rows, where HDR can be had (the swap chain offers HDR10) or is on.
+// With Windows' own d3d9 no HDR goes out: one note row in their place (SS_HDR_FORCE keeps the rows).
 void ss_hdr_menu_rows(void* device) {
   if (g_rows) return;
+  if (WindowsD3d9() && !g_force) {
+    g_rows = true;
+    ss_menu_register(MenuActionRow("hdr_needs_dxvk", "HDR", MENU_PAGE_HDR, nullptr, [] { return "NEEDS RENDERER = DXVK"; }));
+    return;
+  }
   bool show = g_on || g_force;
   if (!show && g_want && device && static_cast<IDirect3DDevice9*>(device) == GameDevice()) {
     if (IHdrSwapchain* ext = Extension(static_cast<IDirect3DDevice9*>(device))) {
@@ -3213,6 +3244,22 @@ void ss_hdr_menu_rows(void* device) {
   }
   if (show) RegisterRows();
 }
+
+// diag.cpp's [summary] block (its own thread: plain reads, a frame old at worst).
+void ss_hdr_state(SsHdrState* o) {
+  o->wanted = g_want;
+  o->on = g_on != 0;
+  o->ten_bit = g_ten_bit;
+  o->described = g_described;
+  o->ext = g_described && !g_no_ext;
+  o->offered = g_offered;
+  o->active = g_active;
+  o->broken = g_broken || g_r.failed;
+  float hud;
+  Levels(&o->peak, &o->paper, &hud);
+  o->display_peak = g_display_peak;
+}
+const char* ss_hdr_allowfse() { return g_allowfse; }
 
 // menu.cpp: the calibration screen.
 bool ss_hdr_active() { return g_active || (g_run && g_force); }

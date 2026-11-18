@@ -1,6 +1,6 @@
 # rdvd update of 2026-11-14 (review fixes): deploy note for the split-second session (VPS owner)
 
-Deployed on 2026-11-14 (from online-site). The owner triggers a deploy; the split-second session, which runs
+Nothing here has been deployed. The owner triggers the deploy; the split-second session, which runs
 vps4954.rackhostvps.com, does it. It replaces the program in `/opt/splitsecond-rdv/` and restarts
 `splitsecond-rdv`. No change to the unit, nftables, Caddy, ssh, `splitsecond-lobby` or `takedawn-lobby`. The
 accounts database and `secret.key` stay as they are (no schema change).
@@ -19,14 +19,7 @@ accounts database and `secret.key` stay as they are (no schema change).
 * Half-open connections (SYN, no CONNECT) expire after 5 s (was 10 s), at most 4 per address and 256 per port; when
   the table is full the oldest half-open one is evicted, an established one never.
 
-* `online-site` only: no error in the statistics (a full disk, a stats folder with the wrong owner after a deploy,
-  a damaged `current.json` or `daily.jsonl`) reaches sign-in, hosting or the timer. A failing statistics step is
-  logged once an hour at most, without a traceback, and rests from 1 minute up to 1 hour before it is tried again.
-  A day change whose write fails is not appended again at every tick, and damaged state files start the day afresh
-  instead of a restart loop.
-
-New counters in the 10-minute `stats` log line: `port_changed`, `half_open_evicted` (and `stats_errors` on
-`online-site`).
+New counters in the 10-minute `stats` log line: `port_changed`, `half_open_evicted`.
 
 ## Which branch
 

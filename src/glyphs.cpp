@@ -712,11 +712,11 @@ bool SteamInfo(PadId* out) {
   auto take = [&] {
     if (slot >= 0 && slot < best && (cur.vid || !cur.type.empty())) best = slot, found = cur, have = true;
   };
-  int lines = 0;
+  std::string all;  // the file in one log line (no handles), at most ~400 characters
   while (fgets(line, sizeof line, f)) {
     size_t n = strlen(line);
     while (n && (line[n - 1] == '\n' || line[n - 1] == '\r' || line[n - 1] == ' ')) line[--n] = 0;
-    if (!logged && lines++ < 24) ss_log("[glyphs] SteamVirtualGamepadInfo: %s", line);
+    if (!logged && n && _strnicmp(line, "handle=", 7) != 0 && all.size() < 400) all += (all.empty() ? "" : " ") + std::string(line);
     if (line[0] == '[') {
       take();
       cur = PadId();
@@ -736,6 +736,7 @@ bool SteamInfo(PadId* out) {
   }
   take();
   fclose(f);
+  if (!logged) ss_log("[glyphs] SteamVirtualGamepadInfo: %s", all.empty() ? "(empty)" : all.c_str());
   logged = true;
   if (have) *out = found;
   return have;

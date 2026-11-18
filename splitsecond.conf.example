@@ -36,10 +36,14 @@ pad_hotplug = true
 pad_translate_dinput = true
 # true: report nothing while another program's window is in front.
 pad_foreground_only = false
+# true: throttle (RT) and brake (LT) work at the same time (brake or drift on the gas). The game reads both
+# triggers from one Z axis, as on a stock Xbox 360 pad; the patch gives each action its own trigger while the
+# game reads it. Bindings and the save stay as they are. false: one shared axis, holding both cancels out. Read at start.
+pad_split_triggers = true
 # Log button changes to splitsecond-patch.log (the first 400). Default false.
 pad_log = false
-# Keyboard: a held arrow key keeps moving in the menus (car selection, lists): once at once, again after 0.4 s, then
-# 10 a second, the game's own repeat for the stick. false: one step per press, as the game ships. (SS_MENU_KEY_REPEAT)
+# Keyboard: a held arrow key keeps moving in the menus (car selection, lists): one step at once, then from 0.4 s on
+# 10 a second, the stick's repeat. false: one step per press, as the game ships. (SS_MENU_KEY_REPEAT)
 menu_key_repeat = true
 # reverb: the PC release ships its event files with the authored per-environment reverb presets
 # (hall, large hall, tank, overhead, hangar, take-down camera, loading screen, default ambient) overwritten by
@@ -207,6 +211,22 @@ net_poll = auto
 # (SS_SAVE_BACKUPS)
 save_backups = 10
 
+# Unlocks (overlay GAME page; live; off while you are online). Memory only: the patch never writes your save. While
+# on, the menus show the content as unlocked; off gives the game's own locks back. But what you play meanwhile is
+# saved by the game as usual (a race won in a locked event counts). So turning one on first copies the save into
+# save-backups\before-unlock-YYYY-MM-DD_HHMMSS\ (kept for good, not counted in save_backups); if that copy fails the
+# switch stays off. From the online sign-in until you leave online play all three are held off.
+#   unlock_all: every event, track, game mode and car.
+#   bonus_content: the PC cheat-code extras (Expressway, Cobretti SlipStream, the retailer cars, the Euro livery pack).
+#   pure_decal: the decal for owning a save of the game Pure.
+# The decals (achievements) have no key here: they change the save for good, so they are only two-press actions in
+# the overlay (GAME > UNLOCK ONLINE DECALS / UNLOCK ALL DECALS), with a backup into save-backups\before-decals-...
+# The game saves the decals only when you finish a race and press CONTINUE on the results. To undo, restore the
+# oldest before-decals- folder: a later press makes a newer one that already holds the decals.
+unlock_all = false
+bonus_content = false
+pure_decal = false
+
 # Which Direct3D 9 the game draws with on Windows. Read at start-up.
 #   dxvk: DXVK (Direct3D 9 on Vulkan), from the dxvk folder next to this file. Holds 120 fps and gives HDR. Each
 #         track stutters a little the first time it is driven, until the graphics driver has cached its pipelines.
@@ -260,8 +280,17 @@ anisotropy = game
 # 1.5 / 2 = the high and low distances and their fades times the factor, the mid distance and the streaming radius
 # kept, and the visibility map's LOD caps off so the distance alone decides (for the idle power-play objects too); the
 # knock-over props (200 m) and the opponents' off distance (200 m as the PC loads it, the Nemesis trucks' 200 m) take the factor too.
+# Particles (smoke, sparks) keep their full emission to the factor times their 150 m / 200 m LOD distances.
 # More draws and streaming. (SS_DRAW_DISTANCE)
 draw_distance = console
+
+# The game's visibility lists (SCENERY VISIBILITY): game = as the game (above console draw distance the scenery's LOD
+# caps and the idle power plays' check are off, as described above); off = the whole visibility map off at any draw
+# distance: every sector and every car, power play and other moving thing inside its distance is drawn, also behind
+# buildings (no occlusion culling), so less appears in one frame at a corner, a tunnel or a crest (the seclusion zones
+# too). More draws and more full meshes asked of the 57 MB streaming pool; split screen pays it for every view. Keep
+# game on the Steam Deck until it is measured there. (SS_VISIBILITY_LISTS)
+visibility_lists = game
 
 # The sun shadow's reach (the port's SHADOW DISTANCE): console = 300 m with a 100 m fadeout (the PC's values are the
 # console's); 1.5 / 2 = range and fadeout times the factor. The first cascade stays where the game has it (about
@@ -300,6 +329,31 @@ shadow_softness = console
 # and sharpening add the same. A value on an exact colour code stays on it. off = the game's shaders. Default on
 # (pending the owner's look on the Deck). Changes at once from the menu when it was on at start. (SS_DEBAND)
 deband = on
+
+# Speed blur (the game's screen-space motion blur, only at its QUALITY High / Very High). It blurs along one frame's
+# camera motion, so at 60 fps it is half as long as at 30 and at 120 a quarter. console = its amount x fps / 30 (at most
+# x4), the edges clamped so the longer blur brings in no line at the bottom: the length the game was tuned for at 30;
+# game = as the PC release; off = no blur. Changes at once from the menu. (SS_MOTION_BLUR)
+motion_blur = console
+
+# How the speed blur is drawn. low and high = this patch's own shader (used while the game's blur pass runs): one
+# sample per 4 pixels of streak with a fine noise between them, so the streaks are smooth instead of the game's 9
+# repeated copies, and another car's colour no longer smears into the background behind it. high = 8 to 24 samples,
+# low = 6 to 12 (at the game's QUALITY Very High high acts as low). Same streak length and direction as the game's
+# (that is motion_blur's). game = the game's own blur shader. Default high, on a Steam Deck low. Changes at once from
+# the menu. (SS_MOTION_BLUR_QUALITY)
+# motion_blur_quality = high
+
+# The game's vignette (darker corners), the light gradient across the top of the picture and the sun / light lens
+# flares: game = as the game shows them, off = not drawn. Change at once from the menu. (SS_VIGNETTE,
+# SS_SCREEN_GRADIENT, SS_LENS_FLARE)
+vignette = game
+screen_gradient = game
+lens_flare = game
+
+# Camera shake from explosions and Power Plays (the game's DisallowAllCameraShake switch): game = on, off = no shake.
+# Camera only, online-safe. Changes at once from the menu. (SS_EXPLOSION_SHAKE)
+explosion_shake = game
 
 # Scenery mesh changes (the port's LOD SMOOTHING): off = the game's one-frame switch between an object's simple and
 # full mesh (at the mid LOD distance, and when the full mesh has streamed in); on / high = both are drawn for half a
@@ -467,6 +521,14 @@ online_server =
 # online_autologin = true
 # Another name instead of the Steam name (letters, digits, space . _ -; up to 12 characters are used; the tag is added).
 # online_name =
+# With online_server set: how races reach the other players (the peer tunnel).
+#   auto   (default) direct first; a player who cannot be reached directly within 2 s is reached through the
+#          server's relay (UDP 31122). No port forwarding is needed.
+#   always every race datagram goes through the server, and the server gives no other player your address (a little
+#          more ping).
+#   off    no tunnel: the game's own direct connections only, as in 1.0.4.
+#   Players with the tunnel (auto, always) and without it (off, 1.0.4 and older) see only rooms of their own kind.
+# online_relay = auto
 # With online_server set: log the lobby's start conditions (read only) as "[online-probe]" lines when they change.
 # (SS_ONLINE_PROBE)
 # online_probe = true

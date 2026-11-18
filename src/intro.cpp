@@ -84,6 +84,8 @@ void ss_intro_user_input() {
 
 void ss_boot_start();  // boot.cpp: boot_to_menu (its default is skip_intro's)
 
+bool ss_pad_support_on();  // pad.cpp: the controller layer is on (pad_support), so the virtual pad #0 exists
+
 bool ss_intro_wanted() { return WantSkip(); }
 
 void ss_intro_start() {
@@ -92,8 +94,12 @@ void ss_intro_start() {
     ss_log("[intro] skip_intro off: the boot movies play");
     return;
   }
+  if (!ss_pad_support_on()) {  // the taps go through the virtual pad #0, which only the controller layer makes
+    ss_log("[intro] skip_intro needs pad_support: the boot movies play");
+    return;
+  }
   g_t0 = GetTickCount();
   g_active = true;
-  ss_log("[intro] skip_intro on: pad #0 taps A while the boot movies run (needs pad_support)");
+  ss_log("[intro] skip_intro on: pad #0 taps A while the boot movies run");
   CreateThread(nullptr, 0, WatchThread, nullptr, 0, nullptr);
 }

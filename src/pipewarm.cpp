@@ -145,7 +145,7 @@ constexpr uint32_t kTagShader = 0x52444853, kTagCombo = 0x4F424D43, kTagDerived 
 #pragma pack(push, 1)
 struct Derived {
   uint64_t variant, original;  // byte code hashes
-  uint32_t maker;              // 1 lodfade, 2 shadowsmooth, 3 deband
+  uint32_t maker;              // 1 lodfade, 2 shadowsmooth, 3 deband, 4 mblur (motion_blur_quality)
   uint32_t pad;
 };
 #pragma pack(pop)
@@ -902,6 +902,7 @@ IDirect3DPixelShader9* ReplayPs(IDirect3DDevice9* d, uint64_t h) {
     if (dv->second.maker == 1) v = ss_lodfade_variant(d, orig);
     else if (dv->second.maker == 2) v = ss_shadowsmooth_variant(d, orig);
     else if (dv->second.maker == 3) v = ss_deband_variant(d, orig);
+    else if (dv->second.maker == 4) v = ss_blur_variant(d, orig);
   }
   if (v) ++g_rp.variants;
   return g_rp.made[h] = v ? static_cast<IDirect3DPixelShader9*>(v) : orig;

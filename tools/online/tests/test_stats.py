@@ -254,69 +254,6 @@ class Files(StatsBase):
 
 
 
-class Failures(StatsBase):
-    """No error in the statistics may reach the game server (sign-in, hosting, the timer)."""
-
-    def break_the_folder(self):
-        blocker = os.path.join(self.dir, "not-a-folder")
-        with open(blocker, "w") as f:
-            f.write("x")
-        self.stats.stats_dir = os.path.join(blocker, "state")      # every write in it fails, as on a full disk
-        self.net.server.clock = lambda: self.net.now
-
-    def test_a_failing_day_write_stops_neither_sign_in_nor_hosting(self):
-        self.player("Before_Midnight")
-        self.break_the_folder()
-        history = len(self.stats.history)
-        self.clock.t += 86400                                       # the next UTC day: the rollover's write fails
-        with self.assertLogs("rdvd", "INFO") as logs:
-            c = self.player("After_Midnight", "192.0.2.2")
-            gid = self.room(c)
-            self.assertIn(gid, self.net.server.gatherings)
-            self.net.advance(120)                                   # ticks: current.json fails too, once a minute
-        self.assertEqual(len(self.stats.history), history + 1)      # the finished day once, not at every tick
-        self.assertEqual(self.stats.day["date"], utc_date(self.clock.t))
-        failed = [m for m in logs.output if "statistics:" in m]
-        self.assertLessEqual(len(failed), 2)                        # one line per hook, no traceback
-        self.assertFalse([m for m in logs.output if "Traceback" in m])
-        self.assertTrue(self.net.server.counters.get("stats_errors"))
-
-    def test_a_failing_hook_rests_then_is_tried_again(self):
-        from rdvd import server as server_mod
-        self.net.server.clock = lambda: self.net.now
-        calls = []
-
-        def broken(now):
-            calls.append(now)
-            raise RuntimeError("boom")
-        self.stats.tick = broken
-        with self.assertLogs("rdvd", "INFO") as logs:
-            self.net.advance(30)
-            self.assertEqual(len(calls), 1)                         # then resting, not 4 tries a second
-            self.net.advance(server_mod.STATS_REST)
-            self.assertEqual(len(calls), 2)
-            self.net.advance(server_mod.STATS_LOG_EVERY - server_mod.STATS_REST - 60, step=1)
-        self.assertLess(len(calls), 2 + server_mod.STATS_LOG_EVERY / server_mod.STATS_REST)   # the rest doubles
-        self.assertEqual(len([m for m in logs.output if "statistics:" in m]), 1)          # one line in that hour
-        del self.stats.tick                                         # repaired: the class's own tick again
-        self.net.advance(server_mod.STATS_REST_MAX + 1)
-        self.assertEqual(self.net.server.stats_failing["tick"]["in_row"], 0)
-
-    def test_damaged_state_files_start_the_day_afresh(self):
-        state = os.path.join(self.dir, "state")
-        with open(os.path.join(state, "current.json"), "w") as f:
-            f.write("[1, 2]")
-        with open(os.path.join(state, "daily.jsonl"), "w") as f:
-            f.write("5\n\"x\"\n{\"date\": \"2026-01-01\", \"signins\": 3}\n")
-        st = self.make_stats()
-        self.assertEqual([d["date"] for d in st.history], ["2026-01-01"])
-        with open(os.path.join(state, "current.json"), "w") as f:
-            f.write('{"date": "%s", "seen": ["not a pid"]}' % utc_date(self.clock.t))
-        with self.assertLogs("rdvd", "INFO"):
-            st = self.make_stats()
-        self.assertEqual(st.seen, set())
-
-
 class SnapshotTest(unittest.TestCase):
     def test_the_ten_minute_log_line_works_with_stats_attached(self):
         net = Net()

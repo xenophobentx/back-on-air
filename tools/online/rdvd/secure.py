@@ -31,9 +31,10 @@ def _register(server, c, r):
     if c.cid is None:
         c.cid = server.next_cid
         server.next_cid += 1
-    if server.relay.bind(c, c.urls):
+    port = server.relay.bind(c, c.urls)
+    if port:
         # A tunnelled client: the only address anybody is told is the virtual one (the game registered it itself).
-        c.public_url, c.urls = "prudp:/address=%s;port=9103;sid=15;type=3" % relay.vip_text(c.vip), []
+        c.public_url, c.urls = "prudp:/address=%s;port=%d;sid=15;type=3" % (relay.vip_text(c.vip), port), []
     else:
         c.public_url = "prudp:/address=%s;port=%d;sid=15;type=3" % (c.addr[0], c.addr[1])
     return Writer().u32(codec.OK).u32(c.cid).string(c.public_url).bytes()

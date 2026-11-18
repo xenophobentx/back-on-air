@@ -184,6 +184,9 @@ const KeyInfo kKeys[] = {
      "Shows sun glare, fire and lamps brighter than white on an HDR screen. Switch HDR on for the screen first."},
     {"hdr_calibrate", LEVEL_PLAYER, MENU_PAGE_HDR, "CALIBRATE HDR",
      "Opens two test patterns to set peak brightness and game brightness for your screen. Needs HDR on."},
+    // Registered by hdr.cpp in place of the HDR rows when the game draws with Windows' own d3d9 (no HDR output there).
+    {"hdr_needs_dxvk", LEVEL_PLAYER, MENU_PAGE_HDR, "HDR",
+     "HDR works only with RENDERER = DXVK (DISPLAY page). Windows' own Direct3D 9 cannot send HDR to the screen."},
     {"hdr_peak", LEVEL_PLAYER, MENU_PAGE_HDR, "PEAK BRIGHTNESS", "The brightest your screen can show. Auto asks the screen."},
     {"hdr_paper_white", LEVEL_PLAYER, MENU_PAGE_HDR, "GAME BRIGHTNESS", "How bright the normal picture is. Raise it in a bright room."},
     {"hdr_hud", LEVEL_PLAYER, MENU_PAGE_HDR, "HUD BRIGHTNESS", "How bright the HUD and menus are. Auto is a little under game brightness."},
@@ -196,6 +199,8 @@ const KeyInfo kKeys[] = {
     {"anisotropy", LEVEL_PLAYER, MENU_PAGE_GRAPHICS, "TEXTURE FILTERING",
      "Keeps the road and walls sharp at a distance. 16x costs almost nothing."},
     {"draw_distance", LEVEL_PLAYER, MENU_PAGE_GRAPHICS, "DRAW DISTANCE", "How far away scenery and other cars are drawn."},
+    {"visibility_lists", LEVEL_PLAYER, MENU_PAGE_GRAPHICS, "SCENERY VISIBILITY",
+     "By distance: things behind buildings are drawn too, so less pops in. Costs frame time."},
     {"shadow_distance", LEVEL_PLAYER, MENU_PAGE_GRAPHICS, "SHADOW DISTANCE", "How far away shadows are drawn."},
     {"shadow_resolution", LEVEL_PLAYER, MENU_PAGE_GRAPHICS, "SHADOW DETAIL", "Sharper shadows. 4096 is for desktop graphics cards."},
     {"shadow_smoothing", LEVEL_PLAYER, MENU_PAGE_GRAPHICS, "SHADOW BLENDING",
@@ -203,6 +208,16 @@ const KeyInfo kKeys[] = {
     {"lod_smoothing", LEVEL_PLAYER, MENU_PAGE_GRAPHICS, "POP-IN FADE", "Fades scenery in and out instead of letting it pop."},
     {"opponent_cars", LEVEL_PLAYER, MENU_PAGE_GRAPHICS, "OPPONENT CAR DETAIL", "How detailed the other cars are at a distance."},
     {"deband", LEVEL_PLAYER, MENU_PAGE_GRAPHICS, "SMOOTH GRADIENTS", "Removes the visible steps in dark skies, fog and glow."},
+    // picture.cpp registers these five and explosion_shake (GAME)
+    {"motion_blur", LEVEL_PLAYER, MENU_PAGE_GRAPHICS, "MOTION BLUR",
+     "The speed blur. As at 30 FPS keeps it as long at 60 and 120 fps as the game was made for. Only at the game's "
+     "QUALITY High or Very High."},
+    {"motion_blur_quality", LEVEL_PLAYER, MENU_PAGE_GRAPHICS, "MOTION BLUR QUALITY",
+     "Low and High: smooth speed streaks, and other cars no longer smear into the background; High takes more "
+     "samples (as Low at QUALITY Very High). Game: the game's own blur with visible repeated copies."},
+    {"vignette", LEVEL_PLAYER, MENU_PAGE_GRAPHICS, "VIGNETTE", "The darker corners of the picture."},
+    {"screen_gradient", LEVEL_PLAYER, MENU_PAGE_GRAPHICS, "TOP GRADIENT", "The light band across the top of the picture."},
+    {"lens_flare", LEVEL_PLAYER, MENU_PAGE_GRAPHICS, "LENS FLARES", "The flares from the sun and bright lights."},
     // pipewarm.cpp registers these two only with DXVK and the record files
     {"pipeline_warmup", LEVEL_PLAYER, MENU_PAGE_GRAPHICS, "PRE-COMPILE",
      "Builds the track's graphics while it loads: no stutter in the first race. The first load of each track takes "
@@ -236,8 +251,10 @@ const KeyInfo kKeys[] = {
      "On: a controller switched on after the game started works. The game then lists four controllers even when "
      "fewer are there."},
     // GAME
-    {"skip_intro", LEVEL_PLAYER, MENU_PAGE_GAME, "SKIP INTRO MOVIES", "Skips the logos and the intro film when the game starts."},
+    {"skip_intro", LEVEL_PLAYER, MENU_PAGE_GAME, "SKIP INTRO MOVIES", "Skips the logos and the intro film when the game starts. Needs CONTROLLER LAYER on."},
     {"boot_to_menu", LEVEL_PLAYER, MENU_PAGE_GAME, "SKIP PRESS START", "Goes straight to the main menu when the game starts."},
+    {"explosion_shake", LEVEL_PLAYER, MENU_PAGE_GAME, "EXPLOSION CAMERA SHAKE",
+     "The camera shakes when something explodes near you, such as a Power Play."},
     {"save_backups", LEVEL_PLAYER, MENU_PAGE_GAME, "SAVE BACKUPS",
      "Copies your save at every start into the save-backups folder beside the game. This many copies are kept."},
     {"online_autologin", LEVEL_PLAYER, MENU_PAGE_GAME, "ONLINE SIGN-IN",
@@ -246,6 +263,20 @@ const KeyInfo kKeys[] = {
      "The name other players see. To use another name, write online_name = <name> in splitsecond.conf."},
     {"options_prompt", LEVEL_PLAYER, MENU_PAGE_GAME, "PC SETTINGS BUTTON IN OPTIONS",
      "Shows a Y prompt on the game's Options screen that opens this menu."},
+    {"unlock_all", LEVEL_PLAYER, MENU_PAGE_GAME, "UNLOCK ALL",
+     "Shows every event, track, mode and car as unlocked. Your races still count. A save backup is made first. Off "
+     "while online."},
+    {"bonus_content", LEVEL_PLAYER, MENU_PAGE_GAME, "BONUS CONTENT",
+     "The PC cheat-code extras: Expressway, the Cobretti SlipStream, the retailer cars, the Euro livery pack. A save "
+     "backup is made first. Off while online."},
+    {"pure_decal", LEVEL_PLAYER, MENU_PAGE_GAME, "PURE DECAL",
+     "The decal for owning a save of the game Pure. A save backup is made first. Off while online."},
+    {"decals_online", LEVEL_PLAYER, MENU_PAGE_GAME, "UNLOCK ONLINE DECALS",
+     "Changes your save for good: gives the six decals of ranked online races in your next race. Press, then press "
+     "again. A save backup is made first. The game saves them only when you finish a race and press CONTINUE."},
+    {"decals_all", LEVEL_PLAYER, MENU_PAGE_GAME, "UNLOCK ALL DECALS",
+     "Changes your save for good: gives every decal in your next race. Press, then press again. A save backup is made "
+     "first. The game saves them only when you finish a race and press CONTINUE on the results."},
     // ADVANCED
     {"smaa_predication", LEVEL_ADVANCED, MENU_PAGE_GRAPHICS, "SMAA: USE DEPTH",
      "SMAA finds edges from depth too: cleaner car and fence edges. Only matters with SMAA. Leave on."},
@@ -405,6 +436,9 @@ void RegisterBuiltins() {
            false);
   Register(MenuChoiceRow("draw_distance", "DRAW DISTANCE", MENU_PAGE_GRAPHICS, MENU_RESTART, "console",
                          {{"console", "NORMAL"}, {"1.5", "FAR (1.5X)"}, {"2", "VERY FAR (2X)"}}, nullptr),
+           false);
+  Register(MenuChoiceRow("visibility_lists", "SCENERY VISIBILITY", MENU_PAGE_GRAPHICS, MENU_RESTART, "game",
+                         {{"game", "GAME"}, {"off", "BY DISTANCE"}}, nullptr),
            false);
   Register(MenuChoiceRow("shadow_distance", "SHADOW DISTANCE", MENU_PAGE_GRAPHICS, MENU_RESTART, "console",
                          {{"console", "NORMAL"}, {"1.5", "FAR (1.5X)"}, {"2", "VERY FAR (2X)"}}, nullptr),
@@ -715,6 +749,11 @@ std::string ValueText(const Item& it, const std::string& v) {
 
 // The help band's text for a row: the value's own line when it has one, else the row's; on DEVELOPER the conf key.
 std::string HelpText(const Item& it) {
+  // extras.cpp: an unlock switch held off (online, a failed save backup), or a decal action that cannot run.
+  if (const char* note = ss_extras_note(it.row.key)) return note;
+  // HDR on while Windows says for sure that HDR is off for the game's monitor (diag.cpp; not under Proton).
+  if (!strcmp(it.row.key, "hdr") && it.value == "true" && ss_diag_windows_hdr_off())
+    return "Windows HDR is off: turn it on in Windows display settings (Use HDR), or the picture looks grey.";
   if (const ValueInfo* vi = FindValue(it.row.key, it.value))
     if (vi->help) return vi->help;
   if (!strncmp(it.row.key, "volume_", 7)) {
@@ -1296,9 +1335,12 @@ void Layout(float W, float H) {
   // Prompts.
   const float fy = y0 + ph - foot;
   AddQuad(x0 + pad, fy, inner, 1 * u + 0.5f, 0x40FFFFFF);
-  const bool action = g_sel >= 0 && g_sel < static_cast<int>(rows.size()) && IsAction(g_items[rows[g_sel]].row);
+  const MenuRow* sel_row = g_sel >= 0 && g_sel < static_cast<int>(rows.size()) ? &g_items[rows[g_sel]].row : nullptr;
+  const bool action = sel_row && IsAction(*sel_row);
   std::string prompts;
-  if (g_used_pad)
+  if (action && !sel_row->apply)  // a note row: nothing to open or change
+    prompts = g_used_pad ? "B  CLOSE      LB/RB  PAGE" : "ESC  CLOSE      Q/E  PAGE";
+  else if (g_used_pad)
     prompts = action ? "A  OPEN      B  CLOSE      LB/RB  PAGE" : "LEFT/RIGHT  CHANGE (SAVED AT ONCE)      B  CLOSE      LB/RB  PAGE";
   else
     prompts = action ? "ENTER  OPEN      ESC  CLOSE      Q/E  PAGE" : "LEFT/RIGHT  CHANGE (SAVED AT ONCE)      ESC  CLOSE      Q/E  PAGE";

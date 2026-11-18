@@ -58,7 +58,7 @@ class Gathering:
 
 def _remove(server, g, why: str):
     if server.gatherings.pop(g.gid, None) is not None:
-        server.stat("gathering_removed", g, why)
+        server.stats.gathering_removed(g, why)
     for pid in g.participants:
         if pid != g.owner:
             server.notify(pid, g.owner, NOTIFY_GONE, g.gid)
@@ -73,6 +73,19 @@ def principal_gone(server, pid: int):
         elif pid in g.participants:
             g.participants.remove(pid)
             server.notify(g.owner, pid, NOTIFY_LEAVE, g.gid, pid)
+
+
+def _tunnelled(server, pid) -> bool:
+    c = server.sessions.get(pid)
+    return c is not None and c.vip is not None
+
+
+def _same_pool(server, c, g) -> bool:
+    """A tunnelled player (relay DLL, its station URL a virtual 10.254.x.y address) and one without the tunnel (an older
+    DLL, online_relay = off, a relay that did not answer) cannot reach each other: the server announces only the
+    virtual address of the first, and the second has no tunnel to send to it. They see and join only rooms of their
+    own kind (the room's owner decides)."""
+    return _tunnelled(server, c.pid) == _tunnelled(server, g.owner)
 
 
 def _get(server, gid: int) -> Gathering:
@@ -104,7 +117,7 @@ def register_gathering(server, c, r):
     server.next_gid += 1
     server.gatherings[g.gid] = g
     server.count("gatherings_registered")
-    server.stat("gathering_registered", g)
+    server.stats.gathering_registered(g)
     return Writer().u32(g.gid).bytes()
 
 
@@ -136,6 +149,9 @@ def update_gathering(server, c, r):
 def participate(server, c, r):
     g = _get(server, r.u32())
     message = r.string(256)
+    if c.pid not in g.participants and not _same_pool(server, c, g):
+        server.count("participate_refused_tunnel")
+        raise RmcError(codec.ERR_ACCESS_DENIED)
     if c.pid not in g.participants:
         if g.max and len(g.participants) >= g.max:
             raise RmcError(codec.ERR_SESSION_FULL)
@@ -185,14 +201,15 @@ def get_participants_urls(server, c, r):
 def find_by_type(server, c, r):
     kind = r.string(64)
     offset, size = _range(r)
-    return _listing([g for g in server.gatherings.values() if g.type == kind], offset, size)
+    return _listing([g for g in server.gatherings.values() if g.type == kind and _same_pool(server, c, g)], offset, size)
 
 
 @rmc("secure", 21, 18)
 def find_by_description(server, c, r):
     text = r.string(256)
     offset, size = _range(r)
-    return _listing([g for g in server.gatherings.values() if g.description == text], offset, size)
+    return _listing([g for g in server.gatherings.values() if g.description == text and _same_pool(server, c, g)],
+                    offset, size)
 
 
 @rmc("secure", 21, 21)

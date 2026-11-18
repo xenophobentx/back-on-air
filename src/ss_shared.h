@@ -17,6 +17,14 @@ void ss_dxvkwin_start();                  // dxvkwin.cpp: dxvk_fit, DXVK on Wind
 void ss_dxvkwin_hold();                   // dxvkwin.cpp: the kept IDirect3D9 is made (display.cpp, before its own object)
 void ss_audio_start();                    // audio.cpp: starts its own thread
 void ss_saves_start(void* self);
+// saves.cpp: a backup kept for good before a save-changing switch (extras.cpp; see saves.cpp), and whether the save
+// still holds its bytes (1 same, 0 changed, -1 not known).
+enum { SAVES_KEPT_FAILED, SAVES_KEPT_MADE, SAVES_KEPT_SAME, SAVES_KEPT_NO_SAVE };
+int ss_saves_backup_kept(const char* prefix, std::string* where);
+int ss_saves_same_as_kept(const char* prefix);
+void ss_extras_start();                   // extras.cpp: unlock_all, bonus_content, pure_decal, the decal actions (SSPC-55)
+void ss_extras_present();                 // extras.cpp: from the present hook: the switches' bytes, the decal requests
+const char* ss_extras_note(const char* key);  // extras.cpp: the overlay's help line for a row while it is held off
 void ss_overlay_start();                  // overlay.cpp: overlay_dir, dlc_tracks, dlc_save_profile (import-slot hooks; its own thread)          // saves.cpp: save_backups, the save folder copied beside the DLL (its own thread)
 // Writes one aligned pointer-sized word in read-only memory (vtable slots in d3d9 / fmod / the game's .rdata).
 // Every module goes through this one lock, so two threads never lift and restore the same page's protection over
@@ -24,6 +32,9 @@ void ss_overlay_start();                  // overlay.cpp: overlay_dir, dlc_track
 // Refuses (false, logged once) any word in the game's code: 0x401000..0xB9B000 at image base 0x400000, and inside
 // the exe anything that is not in a section without IMAGE_SCN_MEM_EXECUTE (.rdata, .data, .idata, ...).
 bool ss_write_word(void* where, uintptr_t value, uintptr_t* previous = nullptr);
+// tunnel.cpp: blocks until the game's import table (0xB9B000-0xB9B56C) is filled and quiet for 500 ms (30 s cap,
+// then false, logged as [who]); every import slot written in the first seconds waits for it.
+bool ss_import_table_wait(const char* who);
 // patch.cpp: frame_pacing = smooth (vsync), vrr or auto: display.cpp makes and resets the device with
 // PresentationInterval ONE, so every present gets its own vblank (decided once, at start).
 bool ss_frame_vsync();
@@ -43,6 +54,19 @@ void ss_autopilot_start();                // autopilot.cpp: autopilot (test aid)
 void ss_streampool_start();              // streampool.cpp: stream_pool / stream_pool_log, the sector streaming pool's size (SSPC-51)
 void ss_streampool_present();            // streampool.cpp: from the present hook: the pool limit at a level load, the 480-node hold
 void ss_slipstream_start();               // slipstream.cpp: slipstream_fix, the draft streaks' texture and definition (SSPC-31)
+void ss_picture_start();                  // picture.cpp: motion_blur, vignette, screen_gradient, lens_flare, explosion_shake (SSPC-54)
+bool ss_picture_clamp_wanted();           // picture.cpp: quality.cpp puts its SetSamplerState hook in for the blur's edge clamp
+// mblur.cpp: motion_blur_quality = low | high, our own motion blur shader in the game's blur pass (SSPC-62)
+bool ss_mblur_deck();                     // SteamDeck=1 in the environment
+const char* ss_mblur_default();           // motion_blur_quality's default: "low" on the Steam Deck, else "high"
+void ss_mblur_start();                    // picture.cpp's start: the setting and the SetPixelShader hook's thread
+void ss_mblur_pass_begin();               // picture.cpp's BlurHook, around the game's pass (render thread)
+void ss_mblur_pass_end();
+bool ss_mblur_apply(const char* value);   // the settings menu (live); false while the hook is not in
+void* ss_blur_original(void* ps);         // hdr.cpp: the game's blur program behind ours, else ps
+bool ss_quality_edge_clamp(bool on);      // quality.cpp: render thread; samplers 0-7 clamped to the edge until called with false
+double ss_frame_update_rate();            // patch.cpp: the game's update rate now (30, 60 or the race's fps)
+bool ss_frame_wanted_above_30();          // patch.cpp: fps asks for 60 or more (read at start)
 void* ss_shadowsmooth_original(void* ps);  // shadowsmooth.cpp: the game's shader behind one of our variants, else ps
 void* ss_lodfade_original(void* ps);       // lodfade.cpp: the game's shader behind one of its dither variants, else ps
 void ss_deband_start();                   // deband.cpp: the tone mapper's and grade's dither (its own thread when wanted)
@@ -82,6 +106,27 @@ float ss_hdr_display_peak();              // the peak the display reports of its
 bool ss_hdr_apply(const char* key, const char* value);      // a key's value, live (hdr, hdr_peak, hdr_paper_white, ...)
 bool ss_hdr_encoded(float* paper_white);  // testshot.cpp: the frame being presented holds PQ; the paper white it was made with
 bool ss_hdr_test_lost();                  // test aid (SS_HDR_TEST_RESET): patch.cpp's Present hook answers D3DERR_DEVICELOST
+// hdr.cpp -> diag.cpp: the patch's HDR state for the log's [summary] block (read from diag.cpp's thread; a value
+// a frame old is fine there) and dxvk.allowFse as the start found it.
+struct SsHdrState {
+  bool wanted, on, ten_bit, described, ext, offered, active, broken;
+  float peak, paper, display_peak;
+};
+void ss_hdr_state(SsHdrState* out);
+const char* ss_hdr_allowfse();            // "True (set by the patch)", "set by the player", "not set", "not used (...)"
+// diag.cpp: what a player's log needs to say why HDR looks wrong (Windows HDR, the window, DXVK's swap chain, the
+// present request, overlays) and the [summary] block. Its own thread; nothing here changes how the game runs.
+void ss_diag_device(void* hwnd);          // display.cpp, after the game's CreateDevice: starts the thread
+void ss_diag_gpu(const char* name, unsigned vendor, const char* driver);  // display.cpp: the adapter, the real driver
+void ss_diag_present();                   // patch.cpp's Present hook: the first frame (one flag test after that)
+void ss_diag_hdr_event(bool on);          // hdr.cpp: HDR10 on / off (and set again after a Reset)
+std::string ss_diag_present_text();       // frame_pacing, interval, window_mode, allowFse (hdr.cpp's "HDR10 on" line)
+bool ss_diag_windows_hdr_off();           // Windows (not Proton) says for sure that HDR is off on the game's monitor
+bool ss_file_version(void* module, unsigned v[4]);  // a loaded module's file version (its version resource)
+const char* ss_display_window_mode();     // display.cpp: "fullscreen", "borderless" or "windowed"
+const char* ss_frame_pacing_name();       // patch.cpp: frame_pacing as decided at start ("auto", "fastest", ...)
+unsigned ss_frame_dev_interval();         // patch.cpp: the device's presentation interval (all ones: not known yet)
+std::string ss_srccheck_system();         // srccheck.cpp: "Windows build 26300" or "Wine / Proton <version>"
 // hdr_probe.cpp: the HDR feasibility probe (hdr_probe; nothing at all when off)
 void ss_hdr_probe_start();
 void ss_hdr_probe_present(void* device);
@@ -101,7 +146,7 @@ bool ss_pipewarm_wanted();                // display.cpp hooks CreateDevice for 
 void ss_pipewarm_start();                 // patch.cpp at start, after env.*: DXVK_CONFIG numCompilerThreads with pre-compile on
 void ss_pipewarm_device(void* device);    // from display.cpp's CreateDevice wrap, before every other device hook
 void ss_pipewarm_present(void* device);   // from patch.cpp's Present hook, before the overlay
-// A pixel shader variant one of our parts made of a game shader (maker 1 lodfade, 2 shadowsmooth, 3 deband): named to
+// A pixel shader variant one of our parts made of a game shader (maker 1 lodfade, 2 shadowsmooth, 3 deband, 4 mblur): named to
 // pipewarm.cpp after the create, so a record can say which game shader it comes from and the replay can make it again.
 void ss_pipewarm_derived(void* variant, void* original, int maker);
 // The variant the current settings draw for a game pixel shader, made now if it was not (render thread; null: none,
@@ -109,6 +154,7 @@ void ss_pipewarm_derived(void* variant, void* original, int maker);
 void* ss_lodfade_variant(void* device, void* ps);
 void* ss_shadowsmooth_variant(void* device, void* ps);
 void* ss_deband_variant(void* device, void* ps);
+void* ss_blur_variant(void* device, void* ps);   // maker 4 (mblur.cpp)
 extern volatile int ss_game_state;        // patch.cpp: kStates index of the last frame step (1 level load, 5 race, 3/7 front end)
 extern volatile long ss_own_drawing;      // menu.cpp: > 0 while menu.cpp / postfx.cpp draw on the game's device; other device hooks pass through
 // Cost counters for the [frames] split line (patch.cpp; SSPC-17): every VirtualQuery and every VirtualProtect made on

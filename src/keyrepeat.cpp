@@ -24,9 +24,14 @@
 // * The codes go into rows 24..27 (actions 0x25..0x28) of both .data keyboard defaults, so the game's own reset
 //   (Controls > Reset, a new profile) keeps them, and of every live keyboard entry, where a loaded profile may have put
 //   its own copy. A row is written only while it is the game's own (its action, key 0).
-// * The mirror holds a code down only after its arrow has been down 0.35 s, so a tap is the game's own single step; a
-//   held arrow then steps at once, 0.4 s later, then 10 a second. A press that starts while the in-game controller is
-//   up (*0xD66B24, vptr 0xBB642C: driving, the pause, the results) never repeats: the arrows are the driving keys.
+// * The mirror makes the steps itself (keyrepeat_core.h): a code is down for one poll per step, none before its arrow
+//   has been held 0.4 s, then one every 0.1 s, never two polls in a row, so a tap is the game's own single step and
+//   the game's stick timer (which would also fire on every frame whose time step is 0) adds none. An arrow counts as
+//   held only while the game's buffer and GetAsyncKeyState both say down, so a release the buffer missed or got late
+//   cannot keep it going; a gap of more than 0.5 s between polls (the game in the background) starts it again. Only
+//   the input manager's own poll (0x40D2B0, into its two buffers at +0xE517) drives it; the other caller (0x4D59C9,
+//   ToAscii for a key message) gets the codes up. A press that starts while the in-game controller is up (*0xD66B24,
+//   vptr 0xBB642C: driving, the pause, the results) never repeats: the arrows are the driving keys.
 // It runs from patch.cpp's Present hook (the game's thread, between frames), every 32nd present.
 //
 // menu_key_repeat = false (SS_MENU_KEY_REPEAT): nothing is written. menu_key_repeat_log = true (a test aid): one log line
@@ -37,6 +42,7 @@
 #include <cstdlib>
 #include <cstring>
 #include "ss_shared.h"
+#include "keyrepeat_core.h"
 
 namespace {
 
@@ -56,7 +62,7 @@ volatile bool g_mirror = false;  // the rows may hold our codes: the keyboard ho
 volatile bool g_in_game = false; // the in-game controller is up (race, pause, results): a press there does not repeat
 constexpr uintptr_t kController = 0xD66B24;  // the in-game run state's +0x10: InGame::cInGameController (patch.cpp)
 constexpr uint32_t kControllerVt = 0xBB642C;
-constexpr DWORD kHoldMs = 350;    // a press shorter than this is the game's own single step (the edge row only)
+constexpr uintptr_t kKeyBuffers = 0xE517;  // the manager's two 256-byte GetKeyboardState buffers (0x40D2D8)
 bool g_failed = false;
 bool g_steplog = false;
 
@@ -81,9 +87,10 @@ bool CheckBuild() {
   static const uint8_t q25[] = {0xC7, 0x44, 0x24, 0x20, 0x25, 0x00, 0x00, 0x00};  // 0x4D6367 mov [esp+0x20], 0x25
   static const uint8_t q28[] = {0xC7, 0x44, 0x24, 0x20, 0x28, 0x00, 0x00, 0x00};  // 0x4D6406 mov [esp+0x20], 0x28
   static const uint8_t key[] = {0x8B, 0x4C, 0x87, 0x04};                           // 0x40EEB3 mov ecx, [edi+eax*4+4]
-  if (!Readable(0x40EEB3, 4) || !Readable(0x4D6367, 8) || !Readable(0x4D6406, 8)) return false;
+  static const uint8_t buf[] = {0x8D, 0x94, 0x31, 0x17, 0xE5, 0x00, 0x00};          // 0x40D2D8 lea edx, [ecx+esi+0xE517]
+  if (!Readable(0x40EEB3, 4) || !Readable(0x4D6367, 8) || !Readable(0x4D6406, 8) || !Readable(0x40D2D8, 7)) return false;
   if (memcmp(reinterpret_cast<const void*>(0x4D6367), q25, 8) || memcmp(reinterpret_cast<const void*>(0x4D6406), q28, 8) ||
-      memcmp(reinterpret_cast<const void*>(0x40EEB3), key, 4))
+      memcmp(reinterpret_cast<const void*>(0x40EEB3), key, 4) || memcmp(reinterpret_cast<const void*>(0x40D2D8), buf, 7))
     return false;
   // Both defaults: rows 24..27 hold actions 0x25..0x28, the row before is 0x24 (Back) and the row after 0x29.
   for (uintptr_t t : kDefaults) {
@@ -137,32 +144,40 @@ void StepLog() {
     ss_log("[keyrepeat] in-game controller %08X: %s", Rd(kController), g_in_game ? "up (a press here does not repeat)" : "none");
   }
   static DWORD t0 = GetTickCount();
+  // All four at once is the block the menus hold while they load (65 lines in a boot, none a key): said once, not logged.
+  if ((b & 0xFF) && (b & 0xFF00) && (b & 0xFF0000) && (b & 0xFF000000)) {
+    static bool said = false;
+    if (!said) {
+      said = true;
+      ss_log("[keyrepeat] step log: all four arrows set (%08x) while the menus load; those frames are not logged", b);
+    }
+    last = b;
+    return;
+  }
   if (b & 0x01010101) ss_log("[keyrepeat] step %s%s%s%s t=%lu ms%s", b & 0xFF ? "L" : "", b & 0xFF00 ? "R" : "",
                             b & 0xFF0000 ? "U" : "", b & 0xFF000000 ? "D" : "", GetTickCount() - t0, b == last ? " (same as last present)" : "");
   last = b;
 }
 }  // namespace
 
-// menu.cpp's GetKeyboardState hook (the game's thread, once per update): the arrows' state on the rows' codes.
-// The code goes down only once the arrow has been held kHoldMs: a tap is the game's own single step (the edge row),
-// whatever the repeat timer does (it fires again on a frame whose time step is 0, seen on the main menu as it loads).
-// A held arrow then steps at once, again 0.4 s later, then every 0.1 s (the stick's timer).
-// A press that starts in the game proper (driving, the pause, the results) does not repeat: the driving keys are the
-// arrows, and a held accelerator would otherwise scroll the pause or results menu once it comes up.
+// menu.cpp's GetKeyboardState hook (the game's thread): the codes for this poll (keyrepeat_core.h has the timing).
+// Called by the input manager's poll (0x40D2B0, once per input update, right after the message pump) and by the key
+// message handler (0x4D59C9, a stack buffer for ToAscii); only the first drives the repeat, the second gets the codes up.
 void ss_keyrepeat_keys(unsigned char* state) {
   if (!g_mirror) return;
-  static bool held[4], allowed[4];
-  static DWORD since[4];
-  const DWORD now = GetTickCount();
+  for (uint32_t vk : kVk) state[vk] = 0;
+  const uintptr_t m = Rd(kManager);
+  const uintptr_t p = reinterpret_cast<uintptr_t>(state);
+  if (!m || (p != m + kKeyBuffers && p != m + kKeyBuffers + 0x100)) return;
+  static keyrepeat::State s;
+  bool buffer[4], physical[4];
   for (int i = 0; i < 4; ++i) {
-    const bool down = (state[kArrow[i]] & 0x80) != 0;
-    if (down && !held[i]) {
-      allowed[i] = !g_in_game;
-      since[i] = now;
-    }
-    held[i] = down;
-    state[kVk[i]] = down && allowed[i] && now - since[i] >= kHoldMs ? 0x80 : 0;
+    buffer[i] = (state[kArrow[i]] & 0x80) != 0;
+    physical[i] = buffer[i] && (GetAsyncKeyState(kArrow[i]) & 0x8000) != 0;
   }
+  const unsigned out = keyrepeat::Poll(s, GetTickCount(), buffer, physical, g_in_game);
+  for (int i = 0; i < 4; ++i)
+    if (out & (1u << i)) state[kVk[i]] = 0x80;
 }
 
 // patch.cpp's Present hook (the game's thread): the defaults once, then the live keyboard entries every 32nd present

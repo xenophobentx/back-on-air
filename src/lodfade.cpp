@@ -94,7 +94,7 @@ constexpr uint32_t kManagerCell = 0x26CC;      // view 0's cell of the visibilit
 constexpr uint32_t kSectorVisible = 0x17C;     // a byte per cell: the sector is visible from it
 // The visibility map's LOD caps (0x7C5749): [manager+0x25B8] -> +0 view 0's cell (-1: none), +0xC the cells (0x58
 // bytes each, +0x54 a byte per sector: the highest LOD it may have from there, 0 = not drawn). Off altogether while
-// the bool at 0xD82788 is set (draw_distance above console sets it).
+// the bool at 0xD82788 is set (draw_distance above console or visibility_lists = off sets it).
 constexpr uint32_t kManagerCaps = 0x25B8;
 constexpr uintptr_t kCapsOff = 0xD82788;
 constexpr uint32_t kEnvCameras = 0x65C;        // view v's camera at +0x65C + v*0x2F4 (0x78B0C8)

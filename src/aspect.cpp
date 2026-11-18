@@ -56,6 +56,9 @@
 //   box and the race would show on beside them. After such a movie is drawn (Display wrapper) the side strips are
 //   cleared to black (IDirect3DDevice9::Clear with the viewport and scissor opened to the back buffer), so they are
 //   pillarboxed like the loading screens, which have no picture behind them.
+// * Only on a screen wider than 16:9 (findings from Glimpse-Fix PR #9, see docs/technical.md): the player name tags
+//   keep their 16:9 shape and the engine's letterbox bars are off (EngineValues, four .data tweakables), and in split
+//   screen the race HUD movies are drawn once per player half (DisplayHalves). Pure part: aspect_core.h.
 //
 // Markers: the Power Play icons (0x4C2B20) and the name tags (0x4C6F90) are projected during the update with the
 // manager camera's matrix (cam+0x198, 0x45A150) and drawn by the engine (the movies render into textures of their own,
@@ -71,6 +74,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <string>
+#include "aspect_core.h"
 #include "ss_shared.h"
 
 #define ENTRY_THIS __attribute__((thiscall, force_align_arg_pointer))
@@ -455,12 +459,14 @@ using DisplayFn = void(__attribute__((thiscall)) *)(void*);
 struct MovieEntry {
   void* movie;
   GViewport out;   // what we gave the movie last
+  GViewport in;    // what the game asked for last
   uint32_t used;
   uintptr_t def;   // its movie definition when `full` was decided
   bool full;       // keeps the game's stretch
   bool bars;       // a full-screen menu over the stopped race: the side strips are made black after it is drawn
   bool named;      // its file name was read (an empty name is read again: the definition may still be loading)
   bool logged;     // its file name is in the log
+  bool split_hud;  // Hud.gfx / TimerOverlay.gfx: in split screen drawn once per player half (DisplayHook)
   char name[80];   // the end of its file name (for the log)
 };
 constexpr int kMovies = 128;
@@ -603,6 +609,7 @@ void ENTRY_THIS SetViewportHook(void* movie, const GViewport* vp) {
     url = MovieUrl(movie);
     e->full = FullWidth(url);
     e->bars = Pillarbox(url);
+    e->split_hud = aspectcore::SplitHudName(url.c_str());
     e->def = def;
     e->named = !url.empty();
     const size_t n = url.size(), keep = sizeof e->name - 1, from = n > keep ? n - keep : 0;
@@ -610,6 +617,7 @@ void ENTRY_THIS SetViewportHook(void* movie, const GViewport* vp) {
     e->name[n - from] = 0;
   }
   const bool full = e->full;
+  e->in = *vp;
   const bool changed = !full && Box(*vp, out);
   e->out = out;
   // Each movie file once (with the first viewport it was boxed in or kept full), up to 100 files: the list of the
@@ -634,6 +642,51 @@ void ENTRY_THIS SetViewportHook(void* movie, const GViewport* vp) {
   orig(movie, &out);
 }
 
+// Two local players side by side: the viewport manager has two views and no forced single view (+8 = -1), the case in
+// which 0x794370 halves the screen's shape for each view.
+bool SplitScreen() {
+  const uintptr_t mgr = Rd(kViewMgr);
+  return mgr && Readable(mgr, 12) && Rd(mgr) == 2 && Rd(mgr + 8) == 0xFFFFFFFFu;
+}
+
+// Split screen on a screen wider than 16:9: the race HUD movies (Hud.gfx, TimerOverlay.gfx) hold player 1's HUD in
+// the left half of their 16:9 stage and player 2's in the right half. Boxed whole, both would sit in the middle of the
+// screen. So the movie is drawn twice instead: the stage at the box's shape, its left half in the middle of the left
+// screen half, then its right half in the middle of the right one (scissor on that half), and the boxed viewport is
+// put back. `in` is the game's full-screen viewport, `out` the box. False when this is not the case (drawn as before).
+uint32_t g_split_logged = 0;
+bool DisplayHalves(void* movie, const GViewport& in, const GViewport& out) {
+  int bw = 0, bh = 0;
+  if (!BackBuffer(bw, bh) || in.bw != bw || in.bh != bh || in.l != 0 || in.t != 0 || in.w != bw || in.h != bh) return false;
+  const double A = ScreenRatio(bw, bh), T = BoxShape(A);
+  if (!aspectcore::Wider(A) || T <= 0 || !SplitScreen()) return false;
+  GViewport v[2];
+  for (int p = 0; p < 2; ++p) {
+    aspectcore::Rect vp, sc;
+    if (!aspectcore::HalfView({in.l, in.t, in.w, in.h}, T, p, vp, sc)) return false;
+    v[p] = in;
+    v[p].l = vp.l;
+    v[p].w = vp.w;
+    v[p].sl = sc.l;
+    v[p].st = sc.t;
+    v[p].sw = sc.w;
+    v[p].sh = sc.h;
+    v[p].flags |= kUseScissor;
+  }
+  const SetViewportFn set = reinterpret_cast<SetViewportFn>(kOrigSetViewport);
+  for (int p = 0; p < 2; ++p) {
+    set(movie, &v[p]);
+    reinterpret_cast<DisplayFn>(kOrigDisplay)(movie);
+  }
+  set(movie, &out);
+  if (g_split_logged < 4) {
+    ++g_split_logged;
+    ss_log("[aspect] split screen: movie %p drawn once per player half (stage %dx%d at %d and %d, scissor %d px wide)", movie, v[0].w, v[0].h,
+           v[0].l, v[1].l, v[0].sw);
+  }
+  return true;
+}
+
 // Gives the box to a movie whose viewport was set before the wrapper was there (or by anything that went around it).
 void ENTRY_THIS DisplayHook(void* movie) {
   if (g_ui_on && movie) {
@@ -644,6 +697,16 @@ void ENTRY_THIS DisplayHook(void* movie) {
     const bool known = e && memcmp(&stored, &e->out, sizeof stored) == 0;
     LeaveCriticalSection(&g_cs);
     if (!known) SetViewportHook(movie, &stored);
+    GViewport in, out;
+    bool halves = false;
+    EnterCriticalSection(&g_cs);
+    if ((e = FindMovie(movie)) && e->split_hud && !e->full && memcmp(&e->in, &e->out, sizeof in) != 0) {
+      in = e->in;
+      out = e->out;
+      halves = true;
+    }
+    LeaveCriticalSection(&g_cs);
+    if (halves && DisplayHalves(movie, in, out)) return;
   }
   reinterpret_cast<DisplayFn>(kOrigDisplay)(movie);
   if (g_ui_on && movie) {
@@ -686,6 +749,73 @@ void InstallUiHooks() {
          reinterpret_cast<void*>(kSlotDisplay), g_hud);
 }
 
+// ================================================================================================ engine values
+// Four engine tweakables (floats in .data, writable data; no code), set only while the screen is wider than 16:9:
+// * the 3D player tags (the names over the other cars in split screen and online): their sizes are a share of the
+//   viewport's width (0x5697xx: tweakable / view width), tuned for 16:9, so a wider screen stretches them. Name
+//   Width, Icon Width and Icon Offset X are scaled by 16:9 / screen shape (heights untouched): they keep their shape.
+// * LetterBox Amount (0.118, read by 0x793E50): the black bars the engine puts above and below the picture in the
+//   car and race intros and cinematics. On a screen already wider than 16:9 they would turn the picture into a thin
+//   strip: 0 (no bars). Our black side strips beside boxed menus are a different thing (they stay).
+// Each is checked once, when a wider screen first asks for it: its name string (the tweakable's registration, .rdata)
+// and its stock value. A value that is neither stock nor what we wrote is someone else's: left alone. Back on a
+// screen that is not wider (resolution change), the stock values are put back. On 16:9 and 16:10 nothing is read
+// or written.
+struct Tweak {
+  uintptr_t va;
+  uint32_t stock;
+  uintptr_t name_va;
+  const char* name;
+  bool tag;           // scaled by TagScale; otherwise set to 0
+  int state;          // -1 not checked, 0 refused, 1 ok
+  uint32_t written;   // what we wrote last (0 = nothing)
+};
+Tweak g_tweaks[] = {
+    {0xD1DB68, 0x3F0A3D71, 0xBD1268, "UI/HUD/PlayerNames3D/ba;Name Width", true, -1, 0},
+    {0xD1DB78, 0x3DCCCCCD, 0xBD12B0, "UI/HUD/PlayerNames3D/bc;Icon Width", true, -1, 0},
+    {0xD1DB88, 0xBC814793, 0xBD12F8, "UI/HUD/PlayerNames3D/be;Icon Offset X", true, -1, 0},
+    {0xD36F54, 0x3DF1A9FC, 0xC12178, "LetterBox/LetterBox Amount", false, -1, 0},
+};
+
+// a: the screen's shape, or 0 for "not wider" (aspect = 16:9).
+void EngineValues(double a) {
+  const bool wide = a > 0 && aspectcore::Wider(a);
+  const float k = aspectcore::TagScale(wide ? a : 0);
+  for (Tweak& t : g_tweaks) {
+    if (t.state < 0) {
+      if (!wide) continue;  // nothing is checked or touched until a wider screen asks
+      const size_t n = strlen(t.name) + 1;
+      t.state = Readable(t.name_va, n) && memcmp(reinterpret_cast<const void*>(t.name_va), t.name, n) == 0 && Readable(t.va, 4) &&
+                        Rd(t.va) == t.stock
+                    ? 1
+                    : 0;
+      if (!t.state) ss_log("[aspect] tweakable %s at %p is not the known build's; left as it is", t.name, reinterpret_cast<void*>(t.va));
+    }
+    if (t.state != 1) continue;
+    uint32_t want = t.stock;
+    if (wide) {
+      float f = 0;
+      if (t.tag) {
+        memcpy(&f, &t.stock, 4);
+        f *= k;
+      }
+      memcpy(&want, &f, 4);
+    }
+    const uint32_t cur = Rd(t.va);
+    if (cur == want) continue;
+    if (cur != t.stock && cur != t.written) {
+      ss_log("[aspect] tweakable %s was changed by something else (0x%08X); left as it is", t.name, cur);
+      t.state = 0;
+      continue;
+    }
+    *reinterpret_cast<volatile uint32_t*>(t.va) = want;
+    t.written = want;
+    float f;
+    memcpy(&f, &want, 4);
+    ss_log("[aspect] %s = %.4f%s", t.name, f, wide ? "" : " (stock)");
+  }
+}
+
 // ================================================================================================ worker
 DWORD WINAPI AspectWorker(LPVOID) {
   if (!ss_conf_present()) return 0;  // no conf file: the DLL does nothing
@@ -710,6 +840,7 @@ DWORD WINAPI AspectWorker(LPVOID) {
       }
       if (ui) InstallUiHooks();
       if (cam) InstallBeginSceneHook();
+      EngineValues(g_off ? 0 : ScreenRatio(bw, bh));
     }
     Sleep(250);
   }

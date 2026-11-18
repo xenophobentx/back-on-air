@@ -28,6 +28,11 @@
 #include "online_conf.h"
 #include "ss_shared.h"
 
+void ss_tunnel_init();                                          // tunnel.cpp: online_relay, the import-slot hooks
+void ss_tunnel_go(uint32_t server_addr_net);                    // tunnel.cpp: starts the tunnel thread (once)
+bool ss_tunnel_own_address(const char* name, uint32_t* addr);  // tunnel.cpp: the own name -> the virtual address
+uint32_t ss_online_server_addr();
+
 namespace {
 
 using GetHostByNameFn = hostent*(WINAPI*)(const char*);
@@ -92,7 +97,25 @@ void LogAnswer(const char* name, const hostent* he, const char* how) {
   }
 }
 
+// The machine's own name while the peer tunnel is up (tunnel.cpp): the virtual address.
+hostent g_own;
+char g_own_name[64];
+uint32_t g_own_addr;
+char* g_own_list[2] = {reinterpret_cast<char*>(&g_own_addr), nullptr};
+
 hostent* WINAPI HookGetHostByName(const char* name) {
+  uint32_t own;
+  if (name && !IsBackendName(name) && ss_tunnel_own_address(name, &own)) {
+    g_own_addr = own;
+    lstrcpynA(g_own_name, name, sizeof g_own_name);
+    g_own.h_name = g_own_name;
+    g_own.h_aliases = g_he_aliases;
+    g_own.h_addrtype = AF_INET;
+    g_own.h_length = 4;
+    g_own.h_addr_list = g_own_list;
+    LogAnswer(name, &g_own, " (the peer tunnel's virtual address)");
+    return &g_own;
+  }
   if (!name || !IsBackendName(name)) {
     hostent* he = g_real(name);
     if (name) LogAnswer(name, he, "");
@@ -115,6 +138,7 @@ hostent* WINAPI HookGetHostByName(const char* name) {
   g_he.h_length = 4;
   g_he.h_addr_list = g_he_list;
   LogAnswer(name, &g_he, " (redirected to online_server)");
+  ss_tunnel_go(addr);  // the game is going online: the peer tunnel says hello to the server's relay port
   return &g_he;
 }
 
@@ -324,6 +348,8 @@ DWORD WINAPI ProbeThread(LPVOID) {
 
 void ss_online_login_start();
 
+uint32_t ss_online_server_addr() { return g_addr; }  // network order; INADDR_NONE while a name is not resolved
+
 void ss_online_start() {
   std::string v;
   if (const char* e = getenv("SS_ONLINE_SERVER")) v = e; else v = ss_conf("online_server");
@@ -341,6 +367,7 @@ void ss_online_start() {
   ss_log("[online] online_server = %s (port %d)%s%s", g_host.c_str(), g_port, by_default ? ", the built-in default" : "",
          g_port != kGamePort ? ": the port is fixed in the game's code at 31120 and is NOT redirected by this build" : "");
   CreateThread(nullptr, 0, Worker, nullptr, 0, nullptr);
+  ss_tunnel_init();         // tunnel.cpp: online_relay (default auto), the peer tunnel's hooks
   ss_online_login_start();  // online_login.cpp: automatic sign-in (online_autologin, online_name)
   const std::string pr = ss_conf("online_probe");
   if (pr == "true" || pr == "1" || getenv("SS_ONLINE_PROBE")) {

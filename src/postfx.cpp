@@ -935,12 +935,24 @@ IDirect3DTexture9* DepthFor(IDirect3DSurface9* bound, UINT w, UINT h) {
   return t;
 }
 
-// What the edge pass used last (for the log): -1 not yet, 0 colour only, 1 with the depth.
+// What the edge pass used last (for the log): -1 not yet, 0 colour only, 1 with the depth. Each reason is logged
+// the first time only; the switches after that are counted for the 3600-frame report (in a race the depth comes and
+// goes from frame to frame, which once filled 98% of a log).
 int g_pred_used = -1;
+uint32_t g_pred_switches = 0;
 void SayPred(int used, const char* why) {
   if (used == g_pred_used) return;
+  if (g_pred_used >= 0) ++g_pred_switches;
   g_pred_used = used;
-  ss_log("[postfx] SMAA edges: %s", why);
+  static const char* said[4] = {};
+  for (const char*& w : said) {
+    if (w == why) return;
+    if (!w) {
+      w = why;
+      ss_log("[postfx] SMAA edges: %s (each reason is logged once; switches are counted in the 3600-frame report)", why);
+      return;
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------------- GPU time (hdr_gpu, an aid)
@@ -1798,7 +1810,9 @@ bool g_frame_display = false, g_frame_done = false;
 
 void Report() {
   if (++g_n.frames < 3600) return;
-  ss_log("[postfx] last %u frames: %u under the UI, %u whole (no UI), %u left alone", g_n.frames, g_n.under_ui, g_n.whole, g_n.skipped);
+  ss_log("[postfx] last %u frames: %u under the UI, %u whole (no UI), %u left alone; SMAA edges switched %u times "
+         "between colour only and depth", g_n.frames, g_n.under_ui, g_n.whole, g_n.skipped, g_pred_switches);
+  g_pred_switches = 0;
   if (IsTaa(g_aa) || g_taa.ok)
     ss_log("[postfx] TAA: %u resolved, %u jittered so far; history dropped: %u camera cuts, %u after a frame not resolved; %u not resolved",
            g_taa.ok, g_taa.jitters, g_taa.cuts, g_taa.stale, g_taa.skipped);

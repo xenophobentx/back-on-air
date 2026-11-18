@@ -63,7 +63,7 @@ async def run(args):
     stats = Stats(args.stats_dir, args.public_dir, token, geoip, args.race_detect, args.docs_url)
     server = Server(args.db, secret, args.public_address, args.auth_port, args.secure_port, args.access_key,
                     log_calls=args.log_calls, notifications=args.notifications, stats=stats)
-    server.stat("write_pages")                 # like every statistics call: an error is logged, the server starts
+    stats.write_pages()
     loop = asyncio.get_running_loop()
     stop = asyncio.Event()
     for sig in (signal.SIGTERM, signal.SIGINT):
@@ -96,7 +96,7 @@ async def run(args):
         if now - last_stats > 600:
             last_stats = now
             log.info("stats %s", server.snapshot())
-    server.stat("close")                       # today's counts survive the restart (current.json)
+    stats.close()                              # today's counts survive the restart (current.json)
     log.info("stopped")
 
 

@@ -17,8 +17,6 @@ from .transport import Endpoint
 
 log = logging.getLogger("rdvd")
 
-STATS_REST, STATS_REST_MAX = 60.0, 3600.0     # seconds a failing statistics hook rests (Server.stat)
-STATS_LOG_EVERY = 3600.0                      # and at most one log line an hour per hook
 HANDLERS = {}     # (endpoint kind, protocol, method) -> (function, guest allowed, name)
 PROTOCOL_NAMES = {3: "NATTraversal", 10: "Authentication", 11: "SecureConnection", 14: "Notification", 20: "Friends",
                   21: "MatchMaking", 23: "Messaging", 25: "AccountManagement", 26: "Competition", 27: "MessageDelivery",
@@ -62,8 +60,6 @@ class Server:
         self.last_prune = 0.0
         self.stats = stats or Stats()
         self.stats.bind(self)
-        self.stats_failing = {}   # statistics hook -> (failures in a row, resting until); see stat()
-        self.clock = time.monotonic
 
     # ------------------------------------------------------------------------------------------------ plumbing
     def count(self, what: str, n: int = 1):
@@ -84,7 +80,7 @@ class Server:
             self.last_prune = now
             self.limits.prune(now)
             self.relay.tick(now)
-        self.stat("tick", now)
+        self.stats.tick(now)
 
     def secure_url(self) -> str:
         return "prudps:/address=%s;port=%d;CID=1;PID=%d;sid=1;stream=3;type=2" % (
@@ -145,34 +141,8 @@ class Server:
             self.sessions[pid] = c
             self.accounts.touch(pid)
             self.count("logins")
-            self.stat("signin", pid, c.addr[0], self.accounts.created_day(pid))
+            self.stats.signin(pid, c.addr[0], self.accounts.created_day(pid))
         return Writer().buffer(struct.pack("<I", (value + 1) & 0xFFFFFFFF)).bytes()
-
-    def stat(self, hook: str, *args):
-        """A statistics hook (stats.py). Nothing in one reaches the game server: an error is logged without a
-        traceback, at most once an hour per hook, and the hook rests (1 minute, doubling up to 1 hour while it keeps
-        failing) before it is tried again."""
-        f = self.stats_failing.get(hook)
-        now = self.clock()
-        if f and now < f["rest_until"]:
-            return
-        try:
-            getattr(self.stats, hook)(*args)
-        except Exception as e:                 # disk full, a folder with the wrong owner, a bug: the server goes on
-            if f is None:
-                f = self.stats_failing[hook] = {"in_row": 0, "rest_until": 0.0, "logged": None, "quiet": 0}
-            f["in_row"] += 1
-            f["rest_until"] = now + min(STATS_REST_MAX, STATS_REST * 2 ** min(f["in_row"] - 1, 10))
-            self.count("stats_errors")
-            if f["logged"] is None or now - f["logged"] >= STATS_LOG_EVERY:
-                log.info("statistics: %s failed (%s: %s)%s; sign-in and games go on, the statistics are tried again later",
-                         hook, type(e).__name__, e, ", %d more failures since the last line" % f["quiet"] if f["quiet"] else "")
-                f["logged"], f["quiet"] = now, 0
-            else:
-                f["quiet"] += 1
-            return
-        if f:
-            f["in_row"] = 0                    # the entry stays: the once-an-hour log line holds across a good call
 
     def connection_closed(self, c, why: str):
         log.debug("%s connection of pid %s closed: %s", c.endpoint.kind, c.pid, why)

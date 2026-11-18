@@ -2163,7 +2163,11 @@ DWORD WINAPI CpuEngineWorker(LPVOID arg) {
   void* volatile* iat = reinterpret_cast<void* volatile*>(kIatEventStart);
   void* volatile* slot = reinterpret_cast<void* volatile*>(kSndVtbl + 4);
   // The protector fills the game's import table once it has unpacked the image (at start-up the slot still holds
-  // the name's offset): wait for that, so nothing we write is laid over afterwards.
+  // the name's offset): wait for that, so nothing we write is laid over afterwards. And wait until it has filled the
+  // whole table: this slot is filled about 1 s in while the protector still writes the rest of the page, and our write
+  // then (the page's protection lifted and put back) can fault its next write, or its own put-back ours (the Windows test PC
+  // boot crashes of 2026-11-17, ss_import_table_wait in tunnel.cpp).
+  ss_import_table_wait("events");
   int i = 0;
   for (; i < 1200 && *iat != start; ++i) Sleep(100);
   if (*iat != start) {
