@@ -48,6 +48,7 @@ void ss_boot_user_input();         // boot.cpp: the same for boot_to_menu (it ha
 bool ss_conf_present();            // patch.cpp: splitsecond.conf exists next to the DLL
 void ss_glyphs_input(bool pad, const char* why);         // glyphs.cpp: the last input came from a pad / the keyboard
 void ss_glyphs_directinput_pad(unsigned long product);  // glyphs.cpp: the first real pad's product (PID<<16|VID)
+void ss_glyphs_pad_layout(bool xbox_layout);           // glyphs.cpp: every pad in the game's list is in the Xbox 360 layout
 
 namespace {
 
@@ -1108,6 +1109,11 @@ struct WrapDI final : IDirectInput8A {
         g_glyph_pad = true;
         ss_glyphs_input(true, "pad present at start");
       }
+      // The pad names (glyphs.cpp) are the virtual pad's: they hold while no device of another layout is passed through.
+      bool xbox_layout = true;
+      for (const Entry& en : list)
+        if (!en.virt && Vid(en.product) != 0x045E) xbox_layout = false;
+      ss_glyphs_pad_layout(xbox_layout);
       for (const Candidate& c : reals)  // the kind of pad, for button_prompts = auto (glyphs.cpp's fallback)
         if (IsPadClass(c.inst.dwDevType)) {
           ss_glyphs_directinput_pad(c.inst.guidProduct.Data1);

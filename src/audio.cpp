@@ -94,6 +94,17 @@ bool WantSpeakerFix() {
   return ParseBool(ss_conf("audio_speaker_fix"), true);
 }
 
+int WantStereoMix() {
+  // 1 = auto (default): FMOD mixes stereo itself on a stereo device, on Windows; 2 = on: also under Wine;
+  // 0 = off: always the game's 5.1.
+  std::string v;
+  if (const char* e = getenv("SS_AUDIO_STEREO_MIX")) v = e;
+  else if (!ss_conf_present()) return 0;
+  else v = ss_conf("audio_stereo_mix");
+  if (v.empty() || v == "auto") return 1;
+  return ParseBool(v, true) ? 2 : 0;
+}
+
 bool WantReverb() {
   if (const char* e = getenv("SS_REVERB")) return ParseBool(e, true);
   if (!ss_conf_present()) return false;  // no conf file: the DLL does nothing, as for the frame rate
@@ -1020,16 +1031,159 @@ void LogFmodOutput(void* sys, const char* when) {
          when, out, spk, hw2, hw3, hwt, caps, rc, minf, maxf, cpl, rate, fmt, outch, inch);
 }
 
+// audio_stereo_mix: the game sets FMOD's speaker mode to 5.1 (FMOD_SPEAKERMODE_5POINT1 = 5) before System::init
+// and never asks the device. On a stereo device FMOD then hands Windows six channels and Windows folds them to two.
+// auto = when the speaker setting FMOD reads from the driver (getDriverCaps: the control panel speaker mode) is
+// stereo (FMOD_SPEAKERMODE_STEREO = 2) and the game asked for 5.1, FMOD is set to stereo here, still before init,
+// so it mixes two channels itself (System::setSpeakerMode, a plain export of fmodex.dll). In stereo mode FMOD folds
+// the event speaker levels (Channel::setSpeakerMix, what fmod_event.dll calls) into L and R itself: front 0 dB,
+// centre -3 dB, rears -6 dB, LFE and sides dropped (tested on the game's fmodex.dll with its WAV writer, mono and
+// stereo sources). Any other device (5.1, 7.1,
+// or a setting FMOD cannot read) keeps the game's 5.1. Under Wine (Proton, Steam Deck) auto keeps 5.1 too: Wine's own
+// fold (front + 0.7 centre + 0.24 rear, not scaled down) keeps the front pair at its level, and the stereo mix is not
+// measured there; on = the stereo mix there as well. off = always the game's 5.1.
+volatile LONG g_stereo_mix = 0;  // 0 off, 1 auto, 2 on
+bool g_stereo_active = false;  // FMOD was set to stereo here
+
+void StereoMixBeforeInit(void* sys) {
+  static auto get_spk = FxSym<long(__stdcall*)(void*, int*)>("?getSpeakerMode@System@FMOD@@QAG?AW4FMOD_RESULT@@PAW4FMOD_SPEAKERMODE@@@Z");
+  static auto set_spk = FxSym<long(__stdcall*)(void*, int)>("?setSpeakerMode@System@FMOD@@QAG?AW4FMOD_RESULT@@W4FMOD_SPEAKERMODE@@@Z");
+  static auto get_caps = FxSym<long(__stdcall*)(void*, int, unsigned*, int*, int*, int*)>(
+      "?getDriverCaps@System@FMOD@@QAG?AW4FMOD_RESULT@@HPAIPAH1PAW4FMOD_SPEAKERMODE@@@Z");
+  if (!g_stereo_mix) {
+    ss_log("[fmod] audio_stereo_mix off: the game's speaker mode is kept");
+    return;
+  }
+  HMODULE nt = GetModuleHandleA("ntdll.dll");
+  if (g_stereo_mix == 1 && nt && GetProcAddress(nt, "wine_get_version")) {
+    ss_log("[fmod] audio_stereo_mix auto: under Wine the game's speaker mode is kept (Wine folds 5.1 at full level)");
+    return;
+  }
+  int spk = -1, cpl = -1, minf = 0, maxf = 0;
+  unsigned caps = 0;
+  if (!get_spk || !set_spk || !get_caps) { ss_log("[fmod] audio_stereo_mix: exports missing, the game's speaker mode is kept"); return; }
+  get_spk(sys, &spk);
+  const long rc = get_caps(sys, 0, &caps, &minf, &maxf, &cpl);
+  if (rc != 0 || cpl != 2 || spk != 5) {
+    ss_log("[fmod] audio_stereo_mix %s: speaker mode %d, device speaker setting %d (rc %ld): kept",
+           g_stereo_mix == 1 ? "auto" : "on", spk, cpl, rc);
+    return;
+  }
+  const long r = set_spk(sys, 2);
+  g_stereo_active = r == 0;
+  ss_log("[fmod] audio_stereo_mix %s: stereo device, the game's 5.1 mix -> FMOD stereo (setSpeakerMode rc %ld)",
+         g_stereo_mix == 1 ? "auto" : "on", r);
+}
+
+// The stereo mix is about 8 dB louder than Windows' fold of the 5.1 one (measured on a race: peaks 0.26 -> 0.87 of
+// full scale), and FMOD writes its mix to the device as 16-bit samples, so a louder moment (a power play, a big
+// crash) would clip hard. With the stereo mix a peak limiter goes on the head of FMOD's DSP network
+// (System::addDSP: after every channel group, before the output): at most -1 dBFS, 64 frames (1.3 ms) of look-ahead,
+// 200 ms release. Below that level it changes nothing (the samples pass through, 1.3 ms later). A sound FMOD puts on
+// a hardware voice (it reports 32 2D + 32 3D after init on Windows) is a DirectSound buffer of its own and passes by.
+constexpr unsigned kLimLook = 64;
+constexpr int kLimMaxCh = 8;
+constexpr float kLimCeil = 0.891f;  // -1 dBFS
+float g_lim_delay[kLimLook * kLimMaxCh];  // FMOD's mixer thread only
+unsigned g_lim_pos = 0, g_lim_hold = 0;
+float g_lim_gain = 1.0f, g_lim_target = 1.0f, g_lim_rel = 0.9999f, g_lim_att = 0.075f;
+float g_lim_min = 1.0f, g_lim_peak = 0.0f;
+unsigned g_lim_frames = 0, g_lim_reduced = 0;
+DWORD g_lim_log_t = 0;
+int g_lim_logs = 0;
+
+HOOK long HkLimiterRead(void* state, float* in, float* out, unsigned len, int inch, int outch) {
+  if (!in || !out) return 0;
+  if (inch != outch || inch < 1 || inch > kLimMaxCh) {  // not a layout we hold: passed as it came
+    const int m = inch < outch ? inch : outch;
+    for (unsigned i = 0; i < len; ++i)
+      for (int c = 0; c < outch; ++c) out[i * outch + c] = c < m ? in[i * inch + c] : 0.0f;
+    return 0;
+  }
+  for (unsigned i = 0; i < len; ++i) {
+    const float* x = in + (size_t)i * inch;
+    float pk = 0.0f;
+    for (int c = 0; c < inch; ++c) pk = fabsf(x[c]) > pk ? fabsf(x[c]) : pk;
+    if (pk > g_lim_peak) g_lim_peak = pk;
+    const float need = pk > kLimCeil ? kLimCeil / pk : 1.0f;
+    if (g_lim_hold) --g_lim_hold;
+    else g_lim_target = 1.0f - (1.0f - g_lim_target) * g_lim_rel;
+    if (need <= g_lim_target) { g_lim_target = need; g_lim_hold = kLimLook; }  // reached before this frame comes out
+    if (g_lim_target < g_lim_gain) g_lim_gain -= (g_lim_gain - g_lim_target) * g_lim_att;
+    else g_lim_gain = g_lim_target;
+    float* d = g_lim_delay + (size_t)g_lim_pos * inch;
+    float* o = out + (size_t)i * outch;
+    for (int c = 0; c < inch; ++c) {
+      float v = d[c] * g_lim_gain;
+      v = v > kLimCeil ? kLimCeil : v < -kLimCeil ? -kLimCeil : v;  // what the look-ahead did not catch
+      o[c] = v;
+      d[c] = x[c];
+    }
+    g_lim_pos = (g_lim_pos + 1) % kLimLook;
+    if (g_lim_gain < 0.999f) ++g_lim_reduced;
+    if (g_lim_gain < g_lim_min) g_lim_min = g_lim_gain;
+  }
+  g_lim_frames += len;
+  const DWORD now = GetTickCount();
+  if (!g_lim_log_t) {
+    g_lim_log_t = now;
+    ss_log("[limiter] first read: %u frames, %d in / %d out ch", len, inch, outch);
+  }
+  // every 10 s when it held the level down, else a summary each minute
+  if (now - g_lim_log_t >= 10000 && (g_lim_reduced || now - g_lim_log_t >= 60000)) {
+    if (g_lim_logs < 120) {
+      ++g_lim_logs;
+      ss_log("[limiter] last %lu s: input peak %.3f (%.1f dBFS), held down on %u of %u frames, deepest %.1f dB",
+             (unsigned long)((now - g_lim_log_t) / 1000), g_lim_peak, 20.0 * log10(g_lim_peak > 1e-6f ? g_lim_peak : 1e-6f),
+             g_lim_reduced, g_lim_frames, 20.0 * log10(g_lim_min));
+    }
+    g_lim_log_t = now;
+    g_lim_frames = g_lim_reduced = 0;
+    g_lim_min = 1.0f;
+    g_lim_peak = 0.0f;
+  }
+  return 0;
+}
+
+void InstallLimiter(void* sys) {
+  static auto create = FxSym<long(__stdcall*)(void*, void*, void**)>(
+      "?createDSP@System@FMOD@@QAG?AW4FMOD_RESULT@@PAUFMOD_DSP_DESCRIPTION@@PAPAVDSP@2@@Z");
+  static auto add = FxSym<long(__stdcall*)(void*, void*, void**)>(
+      "?addDSP@System@FMOD@@QAG?AW4FMOD_RESULT@@PAVDSP@2@PAPAVDSPConnection@2@@Z");
+  static auto active = FxSym<long(__stdcall*)(void*, int)>("?setActive@DSP@FMOD@@QAG?AW4FMOD_RESULT@@_N@Z");
+  static auto get_fmt = FxSym<long(__stdcall*)(void*, int*, int*, int*, int*, int*, int*)>(
+      "?getSoftwareFormat@System@FMOD@@QAG?AW4FMOD_RESULT@@PAHPAW4FMOD_SOUND_FORMAT@@00PAW4FMOD_DSP_RESAMPLER@@0@Z");
+  if (!create || !add || !active) { ss_log("[limiter] exports missing: no limiter (the stereo mix may clip)"); return; }
+  int rate = 48000, fmt = 0, outch = 0, inch = 0, res = 0, bits = 0;
+  if (get_fmt) get_fmt(sys, &rate, &fmt, &outch, &inch, &res, &bits);
+  if (rate < 8000) rate = 48000;
+  g_lim_rel = (float)exp(-1.0 / (0.2 * rate));
+  // FMOD_DSP_DESCRIPTION (FMOD Ex, 0x5C bytes): name[32], version, channels, create, release, reset, read (+0x34), ...
+  static uint8_t desc[0x5C];
+  memset(desc, 0, sizeof desc);
+  strcpy(reinterpret_cast<char*>(desc), "Back on Air limiter");
+  const uintptr_t rd = reinterpret_cast<uintptr_t>(&HkLimiterRead);
+  memcpy(desc + 0x34, &rd, 4);
+  void* dsp = nullptr;
+  const long rc = create(sys, desc, &dsp);
+  const long ra = rc == 0 && dsp ? add(sys, dsp, nullptr) : -1;
+  const long rs = ra == 0 ? active(dsp, 1) : -1;
+  ss_log("[limiter] %s (createDSP %ld, System::addDSP %ld, setActive %ld; %d Hz, %d out-ch): the stereo mix is held at "
+         "-1 dBFS at most", ra == 0 ? "on" : "NOT in", rc, ra, rs, rate, outch);
+}
+
 HOOK long HkSysInit(void* sys, int channels, unsigned flags, void* extra) {
   static auto set_hw = FxSym<long(__stdcall*)(void*, int, int, int, int)>(
       "?setHardwareChannels@System@FMOD@@QAG?AW4FMOD_RESULT@@HHHH@Z");
   LogFmodOutput(sys, "before init");
+  StereoMixBeforeInit(sys);
   long hr = -1;
   if (g_software_mix && set_hw) hr = set_hw(sys, 0, 0, 0, 0);
   long r = g_orig_sys_init(sys, channels, flags, extra);
   ss_log("[fmod] System::init(%d channels, flags %#x) -> %ld; hardware channels %s (%ld)", channels, flags, r,
          g_software_mix ? "set to none: everything in FMOD's software 5.1 mix" : "left as the driver reports them", hr);
   LogFmodOutput(sys, "after init");
+  if (r == 0 && g_stereo_active) InstallLimiter(sys);
   return r;
 }
 
@@ -2670,6 +2824,7 @@ DWORD WINAPI AudioWorker(LPVOID) {
   if (g_fsb_on) InstallFileCallbacks();
   else ss_log("[fsb] audio_fsb_fix off: FMOD reads the sound banks as shipped (sounds start up to 2 KB early)");
   g_software_mix = WantSoftwareMix() ? 1 : 0;
+  g_stereo_mix = WantStereoMix();
   if (WantVoiceDsp()) InstallVoiceDsp();
   else ss_log("[voice_dsp] off: the game's voice units stay out of the DSP network, as shipped");
   g_speaker_fix = WantSpeakerFix() ? 1 : 0;

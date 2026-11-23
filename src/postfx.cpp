@@ -2043,6 +2043,20 @@ std::string Setting(const char* env, const char* key) {
 
 }  // namespace
 
+// hdr.cpp (the lamps' distance fade): the scene camera's depth terms, depth = a + b / distance (P[2][2], P[3][2]);
+// false where there is no single perspective camera (split screen, the known build's camera code missing).
+bool ss_camera_depth(float* a, float* b) {
+  const char* why = nullptr;
+  const uintptr_t cam = TaaCamera(&why);
+  if (!cam) return false;
+  float P[16];
+  memcpy(P, reinterpret_cast<const void*>(cam + kCamProj), sizeof P);
+  if (!(P[11] > 0.5f) || !std::isfinite(P[10]) || !std::isfinite(P[14]) || P[14] == 0.0f || P[10] == 1.0f) return false;
+  *a = P[10];
+  *b = P[14];
+  return true;
+}
+
 void ss_postfx_start() {
   if (!ss_conf_present()) return;
   const std::string aa = Setting("SS_AA", "aa");

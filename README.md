@@ -164,6 +164,7 @@ comment. A missing key uses its default. The file in the zip has a comment for e
 | `extra_resolution` | (none) | Borderless / windowed only: one more size in the game's resolution list, e.g. `2560x1080`. |
 | `renderer` | `dxvk` | Windows only. `dxvk` = DXVK from the `dxvk` folder (120 fps, HDR). `native` = Windows' own Direct3D 9 (see Known limits). |
 | `pause_on_focus_loss` | `true` | `false` = the game keeps running and playing sound when another window is in front. |
+| `game_key_hook` | `off` | `off` = the game's keyboard hook for the whole desktop is left out: other programs' shortcuts (a tiling window manager's Alt+number) can no longer wait for the game while it runs, and the Windows key and Alt+Tab work in front of it. `on` = as the game ships (its hook is meant to block those keys). |
 | `aspect` | `auto` | `auto` widens the picture on a screen wider than 16:9 (more at the sides) and keeps the HUD undistorted. On such a screen it also keeps the player name tags in shape, turns off the black bars above and below the race intros, and puts each player's HUD in his own half in split screen. `16:9` = as the game ships. Or a shape like `21:9`. |
 | `hud_width` | `16:9` | The HUD and menus on a wide screen: `16:9`, `21:9`, `full` (stretched, as the game ships), `letterbox`. |
 | `fov` | `100` | Field of view in percent of the game's (50-150). |
@@ -193,6 +194,10 @@ The overlay also has CALIBRATE HDR, a test screen for these values.
 HDR looks grey, dark or wrong: look at the `[summary]` lines in `splitsecond-patch.log` (they come a second after the
 first frame and after every HDR switch). They show Windows HDR, the monitor, the window, what DXVK made, and a
 `verdict` line. Attach the whole log when you report it.
+
+If the verdict says Windows turned HDR off when the game took the screen (NVIDIA): Windows HDR goes off while the
+game is in front and comes back on when you alt-tab out, so the picture looks grey. We are looking into it; until
+then, set `hdr = false` for a normal picture.
 
 ### Graphics
 
@@ -232,6 +237,7 @@ first frame and after every HDR switch). They show Windows HDR, the monitor, the
 | `audio_sidechain` | `true` | Ducking: crashes and Power Plays turn the music and engines down for a moment, as designed. |
 | `audio_voice_dsp` | `true` | 3D position of the cars' sounds (front, back, side, distance). |
 | `audio_speaker_fix` | `true` | 5.1: effects on the front speakers, as on the console. |
+| `audio_stereo_mix` | `auto` | Stereo device on Windows: FMOD mixes stereo itself, about 8 dB louder than the 5.1 mix Windows folds down, with a limiter against clipping. 5.1 and 7.1 devices and Wine/Proton keep 5.1. `on` = also under Wine, `off` = always 5.1. If the game is now too loud, lower the volume in the game's options, or set `audio_stereo_mix = off` for the old level. |
 | `audio_cpu_engines` | `true` | The opponents' engines play (silent in the PC release). |
 | `audio_fsb_fix` | `true` | Fixes short pieces of wrong sound at the start of sounds and in looping music. |
 | `volume_master`, `volume_music`, `volume_sfx`, `volume_engines`, `volume_voice`, `volume_ambience` | `100` | Volume per group in percent (0-200). |
@@ -251,7 +257,7 @@ first frame and after every HDR switch). They show Windows HDR, the monitor, the
 | `pad_foreground_only` | `false` | `true` = ignore pads while another window is in front. |
 | `pad_split_triggers` | `true` | Throttle (RT) and brake (LT) work at the same time, so you can brake or drift on the gas. `false` = the stock Xbox 360 behaviour: both triggers share one axis and cancel out when both are held. Read at start. |
 | `menu_key_repeat` | `true` | A held arrow key keeps moving in the menus. `false` = one step per press. |
-| `button_prompts` | `auto` | Button icons: `auto` (the device you used last), `xbox360`, `xbox`, `playstation`, `nintendo`, `steam`, `keyboard`. The Instant Replay banner also shows the button or key bound to it (Options > Controls). |
+| `button_prompts` | `auto` | Button icons: `auto` (the device you used last), `xbox360`, `xbox`, `playstation`, `nintendo`, `steam`, `keyboard`. The Instant Replay banner also shows the button or key bound to it (Options > Controls). A pad control the game names in text (the Controls screen, the hints) shows the set's name (`LB`, `RT`, `LS Up`) instead of "Button 5" or "Left Axis Neg Z"; `keyboard` keeps the game's names. |
 
 ### Game
 
@@ -320,7 +326,8 @@ What works (tested with three games): sign-in and account creation, a public (ra
 the results after it, with direct connections and through the relay. The server also has a public statistics page at
 [vps4954.rackhostvps.com/backonair](https://vps4954.rackhostvps.com/backonair/): who is online, open games, daily numbers. What does not work yet:
 
-* Players on 1.0.5 and players on 1.0.4 or older do not see each other's rooms, because only 1.0.5 has the relay.
+* Players on 1.0.5 or newer and players on 1.0.4 or older do not see each other's rooms, because only 1.0.5 and
+  newer have the relay.
   Everyone should update. With `online_relay = off` you see only the rooms of players without the relay.
 * Private games with invitations: the server refuses them, and the friends list is empty. A public race needs 3
   players, so 2 players alone cannot race.
@@ -383,7 +390,7 @@ stalls of 100 ms or more, the worst 1.4 s. With pre-compile, none went over 70 m
   (`dxvk_fit`), but very high settings plus DXVK leave less room.
 * TAA (`aa = taa` / `taa_high`) can smear slightly on fast-moving cars, because the game gives no per-object motion.
 * Online is experimental. It uses one replacement server (`online_server`). Private games with invitations do not
-  work, a public race needs 3 players, and 1.0.4 players do not see 1.0.5 rooms. See [Online](#online-experimental).
+  work, a public race needs 3 players, and 1.0.4 players do not see 1.0.5 or newer rooms. See [Online](#online-experimental).
 * Ultrawide (21:9, 32:9) is tested only in a window on a 16:9 monitor, not on a real ultrawide monitor. Menu bands
   and backgrounds end at the 16:9 box; they do not reach the screen edges.
 * Only the Steam exe that the English, German, French, Italian and Spanish versions share is supported. The Russian
@@ -406,7 +413,7 @@ stalls of 100 ms or more, the worst 1.4 s. With pre-compile, none went over 70 m
 * Online sign-in fails every time: look for `[online] sign-in failed` in the log. If the server is up, the
   name belongs to another key. Put back the `splitsecond-online.key` that made the account, or set
   `online_name = <another name>` in `splitsecond.conf`.
-* Online, you do not see a friend's room: both of you need 1.0.5 (or both the same `online_relay` kind, see
+* Online, you do not see a friend's room: both of you need 1.0.5 or newer (or both the same `online_relay` kind, see
   [Online](#online-experimental)).
 * Lost or broken save: quit the game first. Then copy the files from the newest folder in `save-backups` (or a
   `before-unlock-` / `before-decals-` folder) into
@@ -420,6 +427,34 @@ name, your online name, your SteamID, the PC's name, its LAN address or the user
 reads `<user>`).
 
 ## Release notes
+
+### 2026-11-19: 1.0.6
+
+* Fixed a crash at the end of a race (issue #2). The patch's fade-in for scenery read game memory that the game had
+  just freed. This fix comes from reading the code and from the crash address in the log, which matches it exactly.
+  We could not make the crash happen on our test PC.
+* The game installs a keyboard hook for the whole desktop when it starts. While it is active, every key you press in
+  any program passes through the game first, and it blocks the Windows key and Alt+Tab. The patch now leaves it out
+  (`game_key_hook = off`), so other programs' shortcuts cannot wait for the game, and the Windows key and Alt+Tab
+  work while the game is in front. `game_key_hook = on` brings the game's hook back. The key delay of issue #7 did
+  not happen on our test PC, so we do not know yet if this fixes it.
+* HDR: the LIGHT SOURCES boost now follows the finished picture (issue #10). It fades where motion blur or depth of
+  field smears a lamp, where smoke covers it, and with distance (it starts to fade at 100 m and is gone at 400 m).
+  Near lamps in clear view stay as bright as before. Tried on a Steam Deck OLED too. We could not capture the
+  blurred screen before a race in our tests.
+* Pads: a control that the game writes as text (the Controls screen, the hints) now has the name from your BUTTON
+  PROMPTS set, for example `LB`, `RT` or `LS Up`, instead of "Button 5" or "Left Axis Neg Z" (issue #14). The
+  keyboard set keeps the game's names. In Italian and Polish the direction words have no accents. We did not see a
+  hint with a pad control in our tests.
+* Sound on Windows with stereo speakers or headphones (issue #8): the game now mixes in stereo itself. Before, it
+  always mixed 5.1 and Windows folded that down to two channels, which made it about 8 dB quieter. A limiter keeps
+  the loudest moments below clipping. If the game is now too loud, lower the volume in the game's options, or set
+  `audio_stereo_mix = off` for the old level. Wine, Proton and the Steam Deck are not changed. We did not measure
+  Power Plays and big crashes.
+* The HDR verdict in the log now says when Windows turned HDR off while the game had the screen (seen on NVIDIA). On
+  other graphics cards it says only that Windows HDR went off during the run.
+* New test setting `dxvk_engine_name` for NVIDIA HDR under Windows (issue #2). `auto` gives DXVK a different name
+  on NVIDIA cards. Nobody has tried it on NVIDIA yet. The default (`dxvk`) changes nothing.
 
 ### 2026-11-17: 1.0.5
 

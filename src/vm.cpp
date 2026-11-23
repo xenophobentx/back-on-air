@@ -592,7 +592,13 @@ DWORD WINAPI Thread(LPVOID) {
 // through it). *original is set before the slot changes, because the hook may run at once. False: not found or
 // not writable (*original is 0 again).
 bool ss_hook_import(const char* module, const char* from, const char* name, uintptr_t hook, uintptr_t* original) {
-  const uintptr_t m = reinterpret_cast<uintptr_t>(GetModuleHandleA(module));
+  return ss_hook_import_at(GetModuleHandleA(module), from, name, hook, original);
+}
+
+// The same by module handle: for a module whose name is not unique (renderer.cpp: DXVK's d3d9.dll from the dxvk
+// folder beside Windows' own d3d9.dll).
+bool ss_hook_import_at(void* module, const char* from, const char* name, uintptr_t hook, uintptr_t* original) {
+  const uintptr_t m = reinterpret_cast<uintptr_t>(module);
   if (!m) return false;
   const auto* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(m);
   const auto* nt = reinterpret_cast<const IMAGE_NT_HEADERS32*>(m + dos->e_lfanew);

@@ -215,6 +215,15 @@ bool Get(uintptr_t p, uint32_t& v) {
   return true;
 }
 
+// A word read for the present hook's put-backs. The frame's regions above were found during the render; at a race's
+// teardown the game frees that memory before the present, so a word in a kept region can be gone (issue #2: 1.0.5
+// faulted in Get here). ReadProcessMemory on the own process cannot fault, and it is only a few reads a present.
+bool GetSafe(uintptr_t p, uint32_t& v) {
+  SIZE_T got = 0;
+  return p >= 0x10000 && !(p & 3) &&
+         ReadProcessMemory(GetCurrentProcess(), reinterpret_cast<const void*>(p), &v, sizeof v, &got) && got == sizeof v;
+}
+
 bool GetBlock(uintptr_t p, void* out, size_t n) {
   uint32_t v;
   for (size_t i = 0; i < n; i += 4) {
@@ -663,7 +672,7 @@ uint32_t Combine(std::vector<uint32_t>& mem, uint32_t mesh_new, uint32_t mesh_ol
 void PutBack(Fade& f) {
   for (Swap& w : f.swap) {
     uint32_t cur;
-    if (w.in && Get(f.object + w.field, cur) && cur == w.made) ss_write_word(reinterpret_cast<void*>(f.object + w.field), w.own);
+    if (w.in && GetSafe(f.object + w.field, cur) && cur == w.made) ss_write_word(reinterpret_cast<void*>(f.object + w.field), w.own);
     w.in = false;
   }
 }
@@ -770,7 +779,7 @@ float GetF(uintptr_t p, float fallback) {
 
 void PpPutBack(PpFade& f) {
   uint32_t cur;
-  if (f.in && Get(f.renderable + kRenderableModel, cur) && cur == static_cast<uint32_t>(reinterpret_cast<uintptr_t>(f.proxy)))
+  if (f.in && GetSafe(f.renderable + kRenderableModel, cur) && cur == static_cast<uint32_t>(reinterpret_cast<uintptr_t>(f.proxy)))
     ss_write_word(reinterpret_cast<void*>(f.renderable + kRenderableModel), f.model);
   f.in = false;
 }
@@ -1298,7 +1307,7 @@ void ZonePutBack() {
   for (int i = 0; i < 2; ++i) {
     if (!g_zs.put[i]) continue;
     uint32_t cur = 0;
-    if (Get(g_zs.put[i], cur) && cur == mine) ss_write_word(reinterpret_cast<void*>(g_zs.put[i]), g_zs.own[i]);
+    if (GetSafe(g_zs.put[i], cur) && cur == mine) ss_write_word(reinterpret_cast<void*>(g_zs.put[i]), g_zs.own[i]);
     else ++g_zn.overwritten;  // the game stored its zone again before the present
     g_zs.put[i] = 0;
   }
@@ -1798,6 +1807,7 @@ void ss_lodfade_start() {
 // render, so the game's update and streaming never meet a combined mesh.
 void ss_lodfade_present() {
   if (!g_dev) return;
+  ForgetPages();  // the render's regions: the game may have freed some of them since (the put-backs read with GetSafe)
   for (Fade& f : g_fades)
     if (f.active) PutBack(f);
   for (PpFade& f : g_pp) PpPutBack(f);

@@ -1,6 +1,6 @@
 CXX = i686-w64-mingw32-g++
 CXXFLAGS = -O2 -msse2 -mfpmath=sse -std=c++17 -Wall -Wextra -Wno-unused-parameter -Wno-cast-function-type -static -static-libgcc -static-libstdc++
-RELEASE = 1.0.5
+RELEASE = 1.0.6
 # The release and the commit go into the log's [summary] line (diag.cpp); tools/dist/make-dist.sh reads RELEASE here.
 COMMIT := $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
 SRCS = $(wildcard src/*.cpp)

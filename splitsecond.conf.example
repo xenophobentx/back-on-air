@@ -81,6 +81,15 @@ audio_voice_dsp = true
 # of all six speakers. The event files (the same as the console's) put them on the front pair. true = keep the event
 # files' levels (the console placement); false = as shipped. Default true. (SS_AUDIO_SPEAKER_FIX=0|1)
 audio_speaker_fix = true
+# audio_stereo_mix: the mix on a stereo device (speakers, headphones). The game always has FMOD mix 5.1 and leaves
+# Windows to fold the six channels down to two, and Windows' fold plays them about 8 dB quieter (measured on a race:
+# -27 LUFS, peaks at a quarter of full scale). auto = on Windows, when the device's speaker setting is stereo, FMOD
+# mixes stereo itself (centre and rear sounds folded into left and right), with a limiter that holds the mix at
+# -1 dBFS so a loud moment does not clip; a 5.1 or 7.1 device keeps the game's 5.1 mix, and so does Wine (Proton,
+# Steam Deck), whose fold keeps the level. on = the stereo mix under Wine too (stereo devices only). off = always
+# 5.1, as shipped. Default auto. Takes effect at the next game start. If the game is now too loud, lower the volume
+# in the game's options, or set off for the old level. (SS_AUDIO_STEREO_MIX=auto|on|off)
+audio_stereo_mix = auto
 # audio_cpu_engines: the opponents' engine sounds. Each opponent's engine bank is loaded into a buffer whose size
 # the PC release kept from the Xbox 360 (104,857 bytes); the PC banks are 148..203 KB, so the game refuses every
 # one and the opponents are silent all race (stock too). true = the buffers are 256 KB, the banks load and the
@@ -159,6 +168,8 @@ sfx_trim = 0
 #   nintendo    - letters by position (the game's A is printed B, its X is Y), a plus for Start
 #   steam       - light letters on dark buttons, the menu button
 #   keyboard    - the key caps the PC build draws (the bound key's name)
+# A pad control the game writes as text (the Controls screen, the hints) is named by the set too (LB, RT, LS Up instead
+# of "Button 5", "Left Axis Neg Z"); keyboard keeps the game's names.
 # xbox, nintendo and steam are drawn by the DLL (no picture file). The older key pad_glyphs is still read when this one
 # is absent (pad = xbox360). (SS_BUTTON_PROMPTS; SS_GLYPH_SURVEY=1 logs the small textures the game uploads)
 button_prompts = auto
@@ -242,6 +253,13 @@ renderer = dxvk
 # loses 128 MB) and threads of DLLs get a 1 MB stack instead of the exe's 5 MB. false: off. true: on with any d3d9
 # on Windows. Nothing on Linux / Proton. (SS_DXVK_FIT)
 dxvk_fit = auto
+# The engine name DXVK gives the Vulkan driver. dxvk (the default): "DXVK", as DXVK ships. auto: a test for issue #2
+# (Windows HDR turns off while the game is in front on NVIDIA; NVIDIA's Windows driver is reported to take an engine
+# named "DXVK" off HDR): when an NVIDIA display adapter is present, DXVK's Vulkan instance is named "BackOnAir"
+# instead, and asks for VK_EXT_swapchain_colorspace (the extension of the HDR10 colour space) when the driver offers
+# it. Not tried on NVIDIA yet; the driver may tie other DXVK handling to the name too. force: renamed on any GPU (a
+# test). Windows with DXVK only; nothing on Linux / Proton. Log line "[renderer] Vulkan instance".
+dxvk_engine_name = dxvk
 # Environment variables for this process, set before Direct3D starts (the exe restarts itself on Windows and loses
 # the launcher's environment). One line each, e.g.:
 #   env.DXVK_HUD = fps
@@ -395,6 +413,11 @@ window_mode = fullscreen
 # false: the game keeps running (and keeps its sound) when another window is in front; true: it mutes and pauses a
 # race as it ships. (SS_PAUSE_ON_FOCUS_LOSS)
 pause_on_focus_loss = true
+# The game installs a keyboard hook for the whole desktop: every key pressed in any program can wait for the game, and
+# it is meant to block the Windows key and Alt+Tab. off: the patch leaves it out (other programs' shortcuts cannot be held up by
+# the game, also with it minimised; the Windows key and Alt+Tab work in front of the game). on: the game's hook as it ships.
+# (SS_GAME_KEY_HOOK)
+game_key_hook = off
 
 # Device resets (alt-tab in fullscreen, resolution changes) into the log; a failed reset lists the video-memory
 # objects the game did not release, with the code that created them. (SS_DISPLAY_LOG)

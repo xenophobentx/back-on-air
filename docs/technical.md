@@ -315,6 +315,31 @@ under Proton with null sinks (`tools/audio/ab_capture.sh`):
   PipeWire 5.1 virtual sink in front of the 7.1 one, which can copy the rears to the sides).
 * stereo device: Wine folds the six channels (in its dsound source: front + 0.7 centre + 0.24 rear, LFE dropped). With the speaker fix the
   2D sounds are front-pair only, so they pass the fold at their own level; no clipping over a race (peak 0.78).
+* stereo device on Windows: Windows folds the six channels with its own matrix, scaled well down,
+  and the game comes out quiet. Measured on the Windows test PC (stereo interface, WASAPI loopback of the endpoint, the Airport
+  quick race, same route): -27.0 LUFS and peaks of 0.26 (-11.8 dBFS) over the race, -32.9 LUFS on the menu; a
+  YouTube track plays at about -14 LUFS. `audio_speaker_fix = false` changes nothing there (with `audio_voice_dsp`
+  on it is not applied). `audio_stereo_mix = auto` (default) makes FMOD mix stereo itself: before `System::init`
+  (wrapped, a jump in `fmodex.dll` as for the mixer) it reads the device's speaker setting (`getDriverCaps`, the
+  control panel speaker mode) and, when that is stereo and the game asked for 5.1, calls `System::setSpeakerMode`
+  (stereo). FMOD then folds the centre and rear levels into left and right itself: checked with FMOD Ex 4.28.09 of
+  the game on its non-real-time WAV writer, a 1 kHz tone through `Channel::setSpeakerMix` (the call `fmod_event.dll`
+  makes for the event speaker levels; mono and stereo sources alike) comes out of both L and R at 0 dB for the front
+  pair, -3 dB for the centre and -6 dB for the rear pair; LFE and the side pair are dropped (the game writes no side
+  levels, and the LFE is dropped by Wine's fold too). In 5.1 mode the same test puts each level on its own channel.
+  With `audio_voice_dsp = false` the speaker fix still acts in stereo (race 1.2 LUFS lower with it than without,
+  its 2D sounds lose the centre and rear share as in 5.1). The voice units' read callback
+  takes its stereo path (above), and the race measures -18.8 LUFS with peaks of 0.87 (-1.2 dBFS), the menu -26.1
+  LUFS: about 8 dB louder. FMOD writes its mix as 16-bit samples, so a louder moment would clip: with the stereo
+  mix a peak limiter of ours goes on the head of the DSP network (`System::addDSP`, after every channel group):
+  ceiling -1 dBFS, 64 frames (1.3 ms) of look-ahead, 200 ms release, nothing changed below the ceiling. Log lines
+  `[fmod] audio_stereo_mix`, `[limiter]`. A 5.1 or 7.1 setting, or one FMOD cannot read, keeps the game's 5.1;
+  so does Wine with `auto` (its fold keeps the level, see above); `on` uses the stereo mix there too, `off` never.
+  Limits: FMOD reports 32 2D and 32 3D hardware voices after init on Windows; a sound FMOD put on one would play as a
+  DirectSound buffer of its own and pass by the DSP head and so the limiter (the loopback peaks above include every
+  voice, and the limiter never had to act). Not measured: Wine with `on`, power plays and big crashes (the harness
+  route only drives), and 5.1 / 7.1 devices (unchanged by code: the speaker mode is only touched when the device's
+  setting is stereo).
 
 ### Mixer (`volume_*`)
 
@@ -390,6 +415,25 @@ a row on the overlay's CONTROLLER page (BUTTON PROMPTS), live.
   every pad is Steam's virtual pad 28DE:11FF; when Steam names the real pad behind it (the file
   `SteamVirtualGamepadInfo` points to: `[slot N]` sections with `VID`, `PID`, `type`), that one counts. The log has
   `[glyphs] pad: ...` and `[glyphs] button prompts: ...` lines.
+- **The pad's control names.** Where the game writes a pad control as text (the Controls screen's pad column, and the
+  hints whose `*ACTION_...*` markers become the bound control), `0x40E000` gives the control's text key from the name
+  tables in `.data` (`0xCFA6E0`: `JOY_BUTTON_1..16`, `JOY_POV_1..4`; `0xCFA5E0`: `JOY_AXIS_XPOS` ... `JOY_AXIS_SLIDER1NEG`),
+  and the dictionary `*(0xD64E28)` turns the key into the language's text ("Button 1", "Left Axis Neg Z"). The tables
+  are left alone (bindings are read back by those names). The lookup `0xA15BF0` hashes the key (`0xA15BB0`) and first
+  asks the function at `dict+4` (cdecl, hash -> text or 0), which the game loads as 0. The Present hook points it at the
+  DLL's own function once per loaded dictionary (one data write; the keys' hashes come from the game's own hash
+  function, and each key must be in the dictionary). It answers the virtual pad's keys with the set's names and 0 for
+  every other key: buttons 1-10 -> A B X Y LB RB Back Start LS RS (each set's own names), Z+ / Z- -> LT / RT (L2 / R2,
+  ZL / ZR), the stick halves -> `LS Up` ... `RS Right` (the direction word in the game's language, plain letters;
+  Russian keeps English), `JOY_POV_1` -> `D-pad` (the game's key has no direction). The set is read at each lookup, so a
+  change shows the next time a screen fills its text. `keyboard`, or a passed-through device of another layout in the
+  game's pad list (pad.cpp reports it: a wheel, or a non-Microsoft pad the game has its own table for, even when XInput
+  also carries it), keeps the game's own text for every pad. Log: `[glyphs] pad controls named ...` with the
+  game's own texts, and the first `[glyphs] pad name:` answers.
+- **The Options screen's pad picture (not changed).** `FE_options` calls its movie's `SetVibrationImage` with the
+  constant `"xbox"` (`0x4708A2`, string `0xBAE8D0`); the movie (`mc_vibrationImg`) has only the pictures
+  `FE_Options_vibrationXBOX` and `FE_Options_vibrationPS3`, and the PC's `XBOX` picture is the generic pad. Another
+  picture per set would be our own drawing over that texture as it uploads (as the prompt pictures), mostly art work.
 - **The race HUD.** Its own pictures (the large A and B of `PRESS A TO FIRE ... POWER PLAYS`, the race tips' LT and
   RT, 64x64 each) are streamed textures, not in `resident.ark`: their hashes were taken from what the game uploads on the
   test install (`SS_GLYPH_SURVEY=1` logs every small texture's hash and writes its pixels to `glyph-survey\` beside the
@@ -966,6 +1010,11 @@ constant names) once more into a mask with a depth buffer of its own, which hold
 material writes it into the G-buffer (an emissive texture's alpha included), so a sign keeps the same lift whichever
 of its meshes or materials draws it, and a surface the material does not light gets none; the scene pass lifts the
 pixels they made, in their own hue. The particles' light (fire, sparks) is lifted as well.
+The lamps' lift follows the finished picture (issue #10): the lamps' pixels come from the G-buffer, sharp, and the
+lift is added after the game's motion blur, depth of field and smoke, so it is cut down where the graded pixel is
+darker than the unblurred scene gives it (the blur spread the lamp out), by the share of the pixel's light the soft
+particles made (smoke over it), and with distance (whole up to 100 m, gone at 400 m; the G-buffer's depth through the
+scene camera's projection, none without a single perspective camera).
 Both tone mappers the game has are covered (`SSFilmicToneMapper`, `SSToneMapper`).
 
 Levers: device vtable slots 37, 81..84, 106 and 107 (`SetRenderTarget`, the draw calls, `CreatePixelShader`,
@@ -997,6 +1046,19 @@ missing or does not load, Windows' own is used. DXVK still reads `dxvk.conf` fro
 the exe (the older layout) is always used and the key does nothing (the row is then not shown). Under Wine / Proton
 nothing changes: Proton's DXVK is always used and the row is not shown. One log line `[renderer]` says which d3d9 is
 used and why. Without `splitsecond.conf` the DLL changes nothing, so the game uses Windows' own d3d9.
+
+`dxvk_engine_name = dxvk | auto | force` (default `dxvk`: DXVK's own name, nothing changed; `auto` is a test for
+issue #2, Windows HDR goes off on NVIDIA while the game is in front, not run on NVIDIA yet). DXVK 2.7.1 names its Vulkan instance `pEngineName = "DXVK"`; a third-party bisection (NVIDIA
+developer forum thread 382517) found NVIDIA's Windows driver drops the display out of HDR for that name and keeps HDR
+for any other. DXVK gets `vkGetInstanceProcAddr` with `kernel32!GetProcAddress` and `vkCreateInstance` from that, so
+the patch redirects DXVK's own `GetProcAddress` import slot (its `.idata`, by module handle: `ss_hook_import_at`) and
+hands back a `vkCreateInstance` that renames the engine to `BackOnAir` (engine version kept) and adds
+`VK_EXT_swapchain_colorspace` when the loader offers it (2.7.1 never asks for it, though its HDR10 swap chain colour
+space belongs to it). If that changed call fails, DXVK's own call is made. `auto` renames when `EnumDisplayDevices`
+lists an NVIDIA adapter (vendor 0x10DE; the game's adapter is only known at `CreateDevice`, after the instance);
+`dxvk` never (the default: NVIDIA's driver may tie other DXVK handling to the name too); `force` on any GPU (to test
+the path on AMD). Both the `dxvk` folder and a `d3d9.dll` beside the exe;
+nothing under Wine / Proton. Log line `[renderer] Vulkan instance N: engine name ...` per instance.
 
 On Windows' own d3d9 the device's function table lives inside the device, and d3dx9's font and sprite work (the
 overlay's first frame) writes it back whole: every slot hook of the patch was lost, so the overlay never showed and

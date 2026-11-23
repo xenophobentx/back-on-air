@@ -11,6 +11,7 @@ void ss_log_raw(const char* text);        // lines already formatted ('\n' after
 void ss_vm_start(void* self);             // vm.cpp: vm_log, the address-space log (a diagnostic, off by default)
 void ss_vm_crash();                       // vm.cpp: from the crash line's handler
 bool ss_hook_import(const char* module, const char* from, const char* name, uintptr_t hook, uintptr_t* original);  // vm.cpp
+bool ss_hook_import_at(void* module, const char* from, const char* name, uintptr_t hook, uintptr_t* original);  // vm.cpp: by handle
 void ss_renderer_start();                 // renderer.cpp: renderer = dxvk | native (Windows), before anything makes an IDirect3D9
 bool ss_renderer_dxvk();                  // renderer.cpp: the game draws with DXVK on Windows (dxvk folder, or a d3d9.dll beside the exe)
 void ss_dxvkwin_start();                  // dxvkwin.cpp: dxvk_fit, DXVK on Windows inside the exe's 2 GB
@@ -82,6 +83,7 @@ void ss_keyrepeat_start();               // keyrepeat.cpp: menu_key_repeat, a he
 void ss_keyrepeat_present();             // keyrepeat.cpp: from the present hook: the arrow keys on the menu repeat rows
 void ss_keyrepeat_keys(unsigned char* state);  // keyrepeat.cpp: from the game's GetKeyboardState: arrows mirrored
 bool ss_game_keyboard_hook();            // menu.cpp: the game's GetKeyboardState import taken (once); true when ours
+void ss_kbhook_start();                  // kbhook.cpp: game_key_hook, the game's system-wide keyboard hook left out (#7)
 void ss_lodfade_present();                // lodfade.cpp: from the present hook, before the frame is shown
 void ss_aspect_after_update();            // aspect.cpp: widens the cameras the update just made
 void ss_postfx_after_update();            // postfx.cpp: after the update (and aspect's), TAA's camera jitter
@@ -96,6 +98,7 @@ void ss_hdr_device_created(void* device, unsigned backbuffer_format);  // ... an
 void ss_hdr_before_reset(void* device);   // from the Reset wraps: the passes' default-pool objects are released
 void ss_hdr_after_reset(void* device);    // from display.cpp, after a Reset that succeeded
 void ss_postfx_split(void* device, void* final_surface);   // postfx.cpp: hdr.cpp found the scene/UI split (earlier than postfx's own)
+bool ss_camera_depth(float* a, float* b);  // postfx.cpp: the scene camera's depth = a + b / distance (false: no single perspective camera)
 void ss_hdr_scene(void* device, void* final_surface);      // from postfx.cpp at the scene/UI split: the scene pass
 void ss_hdr_frame_end(void* device, void* final_surface);  // from postfx.cpp at the game's EndScene: the mask pass
 void ss_hdr_menu_rows(void* device);      // from menu.cpp when the overlay opens: registers the HDR rows where HDR can be had

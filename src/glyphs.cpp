@@ -35,6 +35,10 @@
 //    virtual pad's), kind 2 = the hat (control >= 128, angle in hundredths of a degree), 3 = none. Defaults: LB on an
 //    Xbox 360 pad, P (arrow keys layout) or R (WASD layout) [0xCFABF8 / 0xCFB06C, row 38]. An axis binding or none:
 //    the game's own text.
+//  * The pad's control names in text (the Controls screen's pad column, the hints' *ACTION_...* markers): the game's
+//    dictionary turns the keys JOY_BUTTON_n / JOY_AXIS_* / JOY_POV_n into "Button 1", "Left Axis Neg Z"; its lookup's
+//    first function (a data field of the dictionary object) is pointed at ours, which names the virtual pad's controls
+//    by the set (see "the pad's control names" below).
 //
 // auto: the last input decides keyboard or pad (a pad press or stick push -> pad; a key while the pad rests ->
 // keyboard; at start the pad when one is connected). For a pad, the kind of the first pad: Valve (28DE, the Steam
@@ -164,6 +168,17 @@ bool ActiveDevice(uint32_t* type, uint32_t* index) {
   return true;
 }
 
+// Buttons of the virtual pad (an Xbox 360 pad: DirectInput buttons 1-10 = A B X Y LB RB Back Start LS RS) by set
+// (xbox360, xbox, playstation, nintendo, steam), and its triggers (Z+ = LT, Z- = RT, pad.cpp's Fill).
+const char* const kPadButtons[5][10] = {
+    {"A", "B", "X", "Y", "LB", "RB", "Back", "Start", "LS", "RS"},                              // xbox360
+    {"A", "B", "X", "Y", "LB", "RB", "View", "Menu", "LS", "RS"},                               // xbox
+    {"Cross", "Circle", "Square", "Triangle", "L1", "R1", "Share", "Options", "L3", "R3"},      // playstation
+    {"B", "A", "Y", "X", "L", "R", "-", "+", "LS", "RS"},                                       // nintendo (by position)
+    {"A", "B", "X", "Y", "L1", "R1", "View", "Menu", "L3", "R3"},                               // steam
+};
+const char* const kPadTriggers[5][2] = {{"LT", "RT"}, {"LT", "RT"}, {"L2", "R2"}, {"ZL", "ZR"}, {"L2", "R2"}};
+
 // The Instant Replay row {key, control, kind, angle} of the player's device when it is of that sort (keyboard or
 // pad), else of the first device in use of that sort.
 bool ReplayBinding(bool keyboard, uint32_t out[4]) {
@@ -214,16 +229,8 @@ std::string ReplayLabel(Set set) {
     static const char* const dir[4] = {"Up", "Right", "Down", "Left"};
     return b[3] % 9000 || b[3] >= 36000 ? "" : std::string("D-pad ") + dir[b[3] / 9000];
   }
-  // Buttons of the virtual pad (an Xbox 360 pad): A B X Y LB RB Back Start LS RS.
-  static const char* const names[5][10] = {
-      {"A", "B", "X", "Y", "LB", "RB", "Back", "Start", "LS", "RS"},                              // xbox360
-      {"A", "B", "X", "Y", "LB", "RB", "View", "Menu", "LS", "RS"},                               // xbox
-      {"Cross", "Circle", "Square", "Triangle", "L1", "R1", "Share", "Options", "L3", "R3"},      // playstation
-      {"B", "A", "Y", "X", "L", "R", "-", "+", "LS", "RS"},                                       // nintendo (by position)
-      {"A", "B", "X", "Y", "L1", "R1", "View", "Menu", "L3", "R3"},                               // steam
-  };
   const int s = set - kXbox360;
-  return s >= 0 && s < 5 && b[1] < 10 ? names[s][b[1]] : "";
+  return s >= 0 && s < 5 && b[1] < 10 ? kPadButtons[s][b[1]] : "";
 }
 
 // After the game's CameraIconShow: the bound input in front of both texts. A text that is still ours is not
@@ -317,6 +324,156 @@ void InstallFrameHook() {
   }
   g_frames_hooked = true;
   ss_log("[glyphs] Invoke slot %p wrapped (the prompt bar's icons follow the set at its next change)", slot);
+}
+
+// ---------------------------------------------------------------- the pad's control names (the game's text keys)
+//
+// Where the game names a pad control (the Controls screen's pad column, `_level0.CC.Billboard%d.ResultBar.ActionBind`,
+// 0x44EE53; the hints that expand *ACTION_...* markers, 0x562120), 0x40E000(kind 2, button, axis) gives the control's
+// text key from the name tables (.data 0xCFA6E0 buttons and hats {code, "JOY_BUTTON_n" / "JOY_POV_n"}, 0xCFA5E0 axis
+// halves {code, "JOY_AXIS_XPOS" ...}), and the dictionary *(0xD64E28) turns the key into the language's text:
+// "Button 1", "Left Axis Neg Z", "Right Axis Pos Y". The tables stay as they are (the bindings are also read back by
+// those names). The dictionary's lookup 0xA15BF0(dict, key) hashes the key (0xA15BB0) and first asks the function at
+// dict+4, cdecl (hash) -> text or 0, before its own table; the game loads the dictionary (0xA15750, from
+// Resident|Dictionary/<LANGUAGE>_WIN32.dct) with that function 0. One data write points it at ours, which answers the
+// JOY_* keys of the virtual pad's controls with the set's names and gives 0 for every other key (the game's own text).
+// The set is read at every lookup, so a change of button_prompts shows the next time a screen fills its text.
+// Keyboard and mouse names are other keys and stay the game's. With button_prompts = keyboard, or when the game's pad
+// list holds a device that is not in the Xbox 360 layout (a wheel or pad the game has its own table for, passed through
+// by pad.cpp), the game's own text stays. A reload of the dictionary puts 0 back; the Present hook writes ours again.
+
+constexpr uintptr_t kDictObj = 0xD64E28;  // the dictionary object: +0 the loaded data, +4 the lookup's first function
+constexpr uintptr_t kDictHash = 0xA15BB0; // thiscall (dict, key) -> hash
+constexpr uintptr_t kDictFind = 0xA151D0; // thiscall (data, hash) -> text or 0
+constexpr uintptr_t kDictLookupCall = 0xA15C3D;  // in 0xA15BF0: mov eax,[esi+4]; test; je; push edi; call eax; ...
+constexpr uintptr_t kLanguage = 0xD3681C;  // 0 Dutch .. 7 Polish (the name table 0xC4A844), 9 = not read yet
+using DictHashFn = uint32_t(__attribute__((thiscall)) *)(void*, const char*);
+using DictFindFn = const char*(__attribute__((thiscall)) *)(const void*, uint32_t);
+
+// The keys, by what they are on the virtual pad. 0-9 buttons; the rest below.
+enum PadName { kStickLeftX = 10, kStickLeftXNeg, kStickLeftY, kStickLeftYNeg, kTrigLeft, kTrigRight, kStickRightX,
+               kStickRightXNeg, kStickRightY, kStickRightYNeg, kDpad, kPadNameCount };
+const char* const kPadKeys[kPadNameCount] = {
+    "JOY_BUTTON_1", "JOY_BUTTON_2", "JOY_BUTTON_3", "JOY_BUTTON_4", "JOY_BUTTON_5", "JOY_BUTTON_6", "JOY_BUTTON_7",
+    "JOY_BUTTON_8", "JOY_BUTTON_9", "JOY_BUTTON_10",
+    "JOY_AXIS_XPOS", "JOY_AXIS_XNEG", "JOY_AXIS_YPOS", "JOY_AXIS_YNEG",  // left stick right, left, down, up
+    "JOY_AXIS_ZPOS", "JOY_AXIS_ZNEG",                                    // LT, RT
+    "JOY_AXIS_RXPOS", "JOY_AXIS_RXNEG", "JOY_AXIS_RYPOS", "JOY_AXIS_RYNEG",  // right stick
+    "JOY_POV_1",  // the d-pad (the name carries no direction; the game shows the same text for all four)
+};
+// Stick directions by the game's language: right, left, down, up. Plain letters without accents (as options_entry.cpp's
+// label: the fonts are not known to have every letter); Russian keeps English (Cyrillic would need the game's encoding).
+const char* const kDirections[8][4] = {
+    {"Rechts", "Links", "Omlaag", "Omhoog"},       // 0 Dutch
+    {"Right", "Left", "Down", "Up"},               // 1 English
+    {"Droite", "Gauche", "Bas", "Haut"},           // 2 French
+    {"Destra", "Sinistra", "Giu", "Su"},           // 3 Italian
+    {"Rechts", "Links", "Unten", "Oben"},          // 4 German
+    {"Derecha", "Izquierda", "Abajo", "Arriba"},   // 5 Spanish
+    {"Right", "Left", "Down", "Up"},               // 6 Russian
+    {"Prawo", "Lewo", "Dol", "Gora"},              // 7 Polish
+};
+
+uint32_t g_pad_hash[kPadNameCount] = {};
+char g_pad_text[5][8][kPadNameCount][24] = {};  // [set][language][name]: filled once before the function goes in
+volatile LONG g_pad_layout = 0;  // pad.cpp: 1 = every pad the game was given is in the Xbox 360 layout, 2 = not
+bool g_names_checked = false, g_names_ok = false;
+uintptr_t g_names_data = 0;      // the dictionary data the hashes were made for
+volatile LONG g_names_answers = 0;
+
+const char* __cdecl PadNameLookup(uint32_t hash) {
+  if (g_pad_layout != 1) return nullptr;
+  Set set = static_cast<Set>(g_chosen);
+  if (set == kAuto) set = static_cast<Set>(g_detected);  // the pad's kind, whatever the last input was
+  const int s = set - kXbox360;
+  if (s < 0 || s >= 5) return nullptr;  // keyboard: the game's own text
+  for (int i = 0; i < kPadNameCount; ++i) {
+    if (g_pad_hash[i] != hash) continue;
+    int lang = *reinterpret_cast<const volatile int*>(kLanguage);
+    if (lang < 0 || lang >= 8) lang = 1;
+    const char* t = g_pad_text[s][lang][i];
+    if (InterlockedIncrement(&g_names_answers) <= 12) ss_log("[glyphs] pad name: %s -> '%s' (%s)", kPadKeys[i], t, kSetNames[set]);
+    return t;
+  }
+  return nullptr;
+}
+
+void FillPadTexts() {
+  for (int s = 0; s < 5; ++s)
+    for (int l = 0; l < 8; ++l)
+      for (int i = 0; i < kPadNameCount; ++i) {
+        char* o = g_pad_text[s][l][i];
+        const size_t n = sizeof g_pad_text[s][l][i];
+        const char* const* d = kDirections[l];
+        if (i < 10) snprintf(o, n, "%s", kPadButtons[s][i]);
+        else if (i == kTrigLeft || i == kTrigRight) snprintf(o, n, "%s", kPadTriggers[s][i - kTrigLeft]);
+        else if (i == kDpad) snprintf(o, n, "D-pad");
+        else if (i < kTrigLeft) snprintf(o, n, "LS %s", d[i - kStickLeftX]);
+        else snprintf(o, n, "RS %s", d[i - kStickRightX]);
+      }
+}
+
+// The Present hook, every frame: one read while ours is in; the hashes and the write once per loaded dictionary.
+void InstallPadNames() {
+  if (!g_names_checked) {
+    g_names_checked = true;
+    g_names_ok = !IsBadReadPtr(reinterpret_cast<const void*>(kDictLookupCall), 17) &&
+                 !memcmp(reinterpret_cast<const void*>(kDictLookupCall), "\x8B\x46\x04\x85\xC0\x74\x0A\x57\xFF\xD0\x83\xC4\x04\x85\xC0\x75\x1D", 17) &&
+                 !memcmp(reinterpret_cast<const void*>(kDictHash), "\x81\xEC\x00\x02\x00\x00\x56\x8B\xF1", 9) &&
+                 !memcmp(reinterpret_cast<const void*>(kDictFind), "\x56\x8B\x71\x10\x57\x8B\x7C\x24\x0C", 9) &&
+                 !memcmp(reinterpret_cast<const void*>(0xBA1DB0), "JOY_BUTTON_1", 13) &&
+                 !memcmp(reinterpret_cast<const void*>(0xBA1FE0), "JOY_AXIS_ZNEG", 14);
+    if (!g_names_ok) ss_log("[glyphs] the dictionary's lookup is not the known build: pad controls keep the game's names");
+    else FillPadTexts();
+  }
+  if (!g_names_ok) return;
+  const uintptr_t dict = *reinterpret_cast<const volatile uintptr_t*>(kDictObj);
+  if (!dict || IsBadReadPtr(reinterpret_cast<const void*>(dict), 8)) return;
+  volatile LONG* fn = reinterpret_cast<volatile LONG*>(dict + 4);
+  const LONG mine = static_cast<LONG>(reinterpret_cast<uintptr_t>(&PadNameLookup));
+  if (*fn == mine) return;
+  static uintptr_t warned = 0;
+  if (*fn != 0) {
+    if (warned != dict) ss_log("[glyphs] the dictionary's lookup function is already set (%08lx): pad controls keep the game's names", *fn);
+    warned = dict;
+    return;
+  }
+  const uintptr_t data = *reinterpret_cast<const volatile uintptr_t*>(dict);
+  if (!data || IsBadReadPtr(reinterpret_cast<const void*>(data), 0x18)) return;
+  // Hashes by the game's own function; every key must be in the dictionary (a dictionary still being loaded or
+  // fixed up is not, and is tried again at the next frame), and no two the same.
+  static DWORD last_try = 0;
+  const DWORD now = GetTickCount();
+  if (data == g_names_data && now - last_try < 1000) return;
+  last_try = now;
+  uint32_t h[kPadNameCount];
+  std::string orig;
+  for (int i = 0; i < kPadNameCount; ++i) {
+    h[i] = reinterpret_cast<DictHashFn>(kDictHash)(reinterpret_cast<void*>(dict), kPadKeys[i]);
+    const char* t = reinterpret_cast<DictFindFn>(kDictFind)(reinterpret_cast<const void*>(data), h[i]);
+    if (!t || IsBadReadPtr(t, 1)) {
+      if (g_names_data != data) ss_log("[glyphs] %s is not in the dictionary (yet): pad names wait", kPadKeys[i]);
+      g_names_data = data;
+      return;
+    }
+    for (int j = 0; j < i; ++j)
+      if (h[j] == h[i]) {
+        ss_log("[glyphs] %s and %s hash the same: pad controls keep the game's names", kPadKeys[j], kPadKeys[i]);
+        g_names_ok = false;
+        return;
+      }
+    char one[96];
+    snprintf(one, sizeof one, "%s%s='%.40s'", i ? ", " : "", kPadKeys[i] + 4, t);
+    orig += one;
+  }
+  memcpy(g_pad_hash, h, sizeof h);
+  if (InterlockedCompareExchange(fn, mine, 0) != 0) return;
+  g_names_data = data;
+  ss_log("[glyphs] pad controls named by the button prompts, the keyboard set keeps the game's names "
+         "(dictionary %p, language %d, the game's pad list %s); the game's: %s",
+         reinterpret_cast<void*>(dict), *reinterpret_cast<const volatile int*>(kLanguage),
+         g_pad_layout == 1 ? "all Xbox 360 layout" : g_pad_layout == 2 ? "not all Xbox 360 layout: the game's names stay" : "not reported",
+         orig.c_str());
 }
 
 // ------------------------------------------------------------------------------ the found textures
@@ -850,6 +1007,7 @@ void ss_glyphs_present(void* device) {
     HookTextures(dev, "late (the prompt textures loaded before keep the game's pictures until they are loaded again)");
   }
   InstallFrameHook();
+  InstallPadNames();
   static DWORD last_sweep = 0;
   const DWORD now = GetTickCount();
   if (now - last_sweep > 5000) {
@@ -886,6 +1044,14 @@ void ss_glyphs_input(bool pad, const char* why) {
 
 // pad.cpp: the first real pad of the game's DirectInput list (PID<<16|VID), the fallback for the device list.
 void ss_glyphs_directinput_pad(unsigned long product) { g_di_product = product; }
+
+// pad.cpp, when it has made the game's pad list: every pad in it is in the Xbox 360 layout (our virtual pads, a real
+// Xbox pad), or one is not (a wheel or pad passed through to the game's own table). The pad names follow only the first.
+void ss_glyphs_pad_layout(bool xbox_layout) {
+  if (InterlockedExchange(&g_pad_layout, xbox_layout ? 1 : 2) != (xbox_layout ? 1 : 2))
+    ss_log("[glyphs] the game's pad list: %s", xbox_layout ? "Xbox 360 layout (pad controls named by the button prompts)"
+                                                            : "a device in another layout (pad controls keep the game's names)");
+}
 
 // The settings menu's BUTTON PROMPTS row.
 bool ss_glyphs_apply(const char* key, const char* value) {

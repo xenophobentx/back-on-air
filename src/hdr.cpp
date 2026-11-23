@@ -238,6 +238,8 @@ float4 k4 : register(c4);    // x: 1 = the old corona rule, y: 1 = the lamps by 
                              // z: what to write instead of the extra light (hdr_light_log): 1, 2, 3 = p1, p2, p3
 float4 k2 : register(c2);    // the particles' share of light (0: none), where the log extension starts, 1 = adaptation read,
                              // 1 = a tone map drew here (0: only the luma is written)
+float4 k5 : register(c5);    // the lamps' distance fade: x, y the camera's depth terms (depth = x + y / distance), z the
+                             // distance the fade starts at, w where the lift is gone (w = 0: no fade, the camera is not known)
 static const float3 kLuma = float3(0.2125, 0.7154, 0.0721);
 float3 Linear(float3 c) {  // the inverse of the sRGB write the game's tone mapper draws with
   return float3(c.r <= 0.04045 ? c.r / 12.92 : pow((c.r + 0.055) / 1.055, 2.4),
@@ -269,6 +271,7 @@ float4 main(float2 uv : TEXCOORD0) : COLOR {
   p2.x = k4.y > 0.5 ? (max(le.r, max(le.g, le.b)) > 0.002 ? 1.0 : 0.0) : (lm4.a > 0.004 ? 1.0 : 0.0);
   p2.y = k4.y > 0.5 ? clamp((zl - zs) / (1e-6 + 2e-5 * max(zl, zs)), -100.0, 100.0) : 0.0;
   p2.z = lm4.a;
+  if (k4.y < 0.5) p2.y = -1.0;  // the stencil tag: no lift worked out here (the lamps' follow below, when there is one)
   p3.w = dot(k * ad3, kLuma);
   if (L > 1e-6 && k2.w > 0.5) {
     float n = c100.z, w = c100.w, white = k1.x;
@@ -338,10 +341,22 @@ float4 main(float2 uv : TEXCOORD0) : COLOR {
     }
     if (k3.y > 0.0 && lw > 0.0) {
       float gate = max(smoothstep(0.02, 0.2, la), smoothstep(0.03, 0.3, L));
-      float3 lampv = chroma * (lw * gate * k3.y);
+      // The lift follows what the finished picture shows of the lamp (issue #10). The lamp's pixels are the
+      // G-buffer's, sharp and unblurred, and the lift is added after the game's motion blur and depth of field and over
+      // its smoke, so a blurred or covered lamp stood out as a sharp sticker. Three cuts, each 1 for a near lamp in
+      // clear view:
+      //  - blur: the graded pixel (after the blur) against the SDR value the unblurred scene gives here, brightest
+      //    channel each; a lamp the blur has spread out is darker in the graded picture than in the scene;
+      //  - smoke: the share of the pixel's light the soft particles made (the composite added it to the lit scene);
+      //  - distance: from the G-buffer's depth through the camera's projection, gone by k5.w.
+      float blur = smoothstep(0.45, 0.8, max(gl.r, max(gl.g, gl.b)) / max(max(sdr.r, max(sdr.g, sdr.b)), 1.0 / 64.0));
+      float away = k5.w > 0.0 ? 1.0 - smoothstep(k5.z, k5.w, abs(k5.y / max(abs(zs - k5.x), 1e-9))) : 1.0;
+      float follow = blur * away * (1.0 - smoothstep(0.25, 0.75, lp / max(L, 1e-4)));
+      float3 lampv = chroma * (lw * gate * follow * k3.y);
       p1.x = share;
       p1.y = gate;
       p2.w = la;
+      if (k4.y < 0.5) p2.yzw = float3(follow, blur, away);  // hdr_light_log (the stencil tag: p2's last three are free)
       p3.y = dot(lampv, kLuma);
       if (k4.x > 0.5) sourced += lampv * (1.0 - add_tag);
       else sourced = max(sourced, lampv);
@@ -1506,6 +1521,9 @@ struct LampSave {
   float scale[4], soft[4];
 } g_lamp_save;
 
+// The lamps' lift fades out with distance (issue #10: far signs and the terminal's lamps stood out too bright): whole
+// up to kLampFadeFrom, gone at kLampFadeTo, in the camera's units (metres; the props' LOD steps are 150 and 400).
+constexpr float kLampFadeFrom = 100.0f, kLampFadeTo = 400.0f;  // (near opponents' tail lights keep their lift)
 float LampWhites() { return g_lift > 0.0f ? 2.5f * g_lamp_gain * g_lift / 3.0f : 0.0f; }
 
 // Before a draw: the reference amount for a lamp draw to make again into the mask, or 0. `why` (hdr_light_log): '+'
@@ -1823,6 +1841,8 @@ void ProbeWindow(IDirect3DDevice9* d, const float* k, IDirect3DSurface9* back) {
   struct Id {
     int n, ok, nearer;  // nearer: the lamp's depth is in front of the scene's by more than is allowed
     float share, gate, add, extra, lamp, off;  // off: the failing samples' |difference| in allowed differences
+    float follow, blur, away;  // the stencil tag: the lift's cuts (issue #10), summed over the samples that have a lift
+    int lifted, follow_low, follow_half;  // ... those samples, and of them the ones with follow under 0.9 and under 0.5
   } ids[64] = {};
   struct Pair {
     int lamp, cover, n;
@@ -1844,7 +1864,7 @@ void ProbeWindow(IDirect3DDevice9* d, const float* k, IDirect3DSurface9* back) {
       top = std::max(top, ex);
       if (b[0] > 0.5f) {
         ++nl;
-        const bool same = fabsf(b[1]) <= 1.0f;
+        const bool same = !OldLampPath() || fabsf(b[1]) <= 1.0f;
         nok += same;
         lamp_extra += ex;
         Id& id = ids[OldLampPath() ? std::min(std::max(static_cast<int>((1.0f - b[2]) * 255.0f / 4.0f + 0.5f), 0), 63) : 0];
@@ -1859,6 +1879,8 @@ void ProbeWindow(IDirect3DDevice9* d, const float* k, IDirect3DSurface9* back) {
           if (k < 48) ++pairs[k].n, pairs[k].off += b[1];
         }
         ++id.n, id.ok += same, id.share += a[0], id.gate += a[1], id.add += a[2], id.extra += ex, id.lamp += c[1];
+        if (!OldLampPath() && b[1] >= 0.0f)
+          ++id.lifted, id.follow += b[1], id.blur += b[2], id.away += b[3], id.follow_low += b[1] < 0.9f, id.follow_half += b[1] < 0.5f;
       }
       if (a[2] > 0.02f) ++na, add_tag += a[2], add_extra += ex, add_light += c[3], sourced += c[2], rel += c[0];
       if (a[3] > 0.02f) ++np;
@@ -1898,6 +1920,12 @@ void ProbeWindow(IDirect3DDevice9* d, const float* k, IDirect3DSurface9* back) {
            i, !OldLampPath() ? " (all the tagged lamps)" : i >= 1 && i <= g_npd ? "" : " (mixed)", id.n, id.ok, id.nearer, id.n > id.ok ? id.off / static_cast<float>(id.n - id.ok) : 0.0f, id.share / n,
            id.gate / n, id.add / n, id.lamp / n, id.extra / n);
     ++g_probe_lines;
+    if (!OldLampPath() && id.lifted) {
+      const float m = static_cast<float>(id.lifted);
+      ss_log("[light]   #%d follow %.2f (blur %.2f, distance %.2f) over %d lifted px; under 0.9: %d px, under 0.5: %d px", i, id.follow / m, id.blur / m, id.away / m,
+             id.lifted, id.follow_low, id.follow_half);
+      ++g_probe_lines;
+    }
   }
   for (int k = 0; k < npairs; ++k) {
     const Pair& pr = pairs[k];
@@ -2195,6 +2223,10 @@ void TagEnd(IDirect3DDevice9* d) {
         d->SetTexture(0, nullptr);
         d->SetTexture(1, nullptr);
         g_tag_resolved = true;
+        // The G-buffer's depth, for the lamps' distance fade in the scene pass (an INTZ texture, or no fade).
+        D3DSURFACE_DESC dd = {};
+        if (!g_scene_depth && SUCCEEDED(ds->GetDesc(&dd)) && dd.Format == kIntz)
+          ds->GetContainer(kIidTexture9, reinterpret_cast<void**>(&g_scene_depth));
       } else {
         g_tag_failed = true;
         ss_log("[hdr] light sources: the lamps' target cannot be bound beside the game's depth surface; the lamps are drawn again instead");
@@ -2424,13 +2456,24 @@ void ScenePass(IDirect3DDevice9* d, IDirect3DSurface9* f, Scope& sc) {
     Sampler(d, 0, graded, false);
     const float lift = g_particles > 0.0f ? std::max(static_cast<float>(g_lift), g_particles) : 0.0f;
     if (!whole || nuse > 1) {  // the luma everywhere first; then each tone map's rectangle
-      const float zero[20] = {};
-      d->SetPixelShaderConstantF(0, zero, 5);
+      const float zero[24] = {};
+      d->SetPixelShaderConstantF(0, zero, 6);
       for (DWORD s = 1; s <= 10; ++s) Sampler(d, s, nullptr, false);
       Quad(d, fd.Width, fd.Height);
       d->SetRenderState(D3DRS_SCISSORTESTENABLE, TRUE);
     }
     if (g_part && g_part_share > 0.0f && lift > 0.0f) ++g_t.particles;
+    // The lamps' distance fade: the G-buffer's depth and the scene camera's projection (postfx.cpp), both or none.
+    float za = 0.0f, zb = 0.0f;
+    const bool dist = g_scene_depth && ss_camera_depth(&za, &zb);
+    {
+      static bool said_dist = false;
+      if (dist && !said_dist && LampWhites() > 0.0f) {
+        ss_log("[hdr] light sources: the lamps' lift fades with distance from %.0f to %.0f (the camera's near %.3g, far %.4g)", kLampFadeFrom, kLampFadeTo,
+               -zb / za, zb / (1.0f - za));
+        said_dist = true;
+      }
+    }
     for (int u = 0; u < nuse; ++u) {
       const Capture& c = g_cap[use[u]];
       const bool part = g_part && g_part_share > 0.0f && lift > 0.0f;
@@ -2441,16 +2484,17 @@ void ScenePass(IDirect3DDevice9* d, IDirect3DSurface9* f, Scope& sc) {
                          (old_lamps ? g_lamp_cleared && g_r.lamp_mask && g_r.lamp_emit && g_r.lamp_depth && g_scene_depth && fd.Width == g_r.lw && fd.Height == g_r.lh
                                     : g_tag_resolved && g_r.lamp_tag && fd.Width == g_r.tw && fd.Height == g_r.th);
       const LONG test = g_test;
-      const float k[20] = {c.c100[0], c.c100[1], c.c100[2], c.c100[3],
+      const float k[24] = {c.c100[0], c.c100[1], c.c100[2], c.c100[3],
                            c.white, c.bloom ? c.bloom_power : 1.0f, part ? lift : 0.0f, g_log,
                            part ? g_part_share : 0.0f, kLogStart, c.adapt ? 1.0f : 0.0f, 1.0f,
                            add && test != 3 ? static_cast<float>(g_lift) : 0.0f, lamps && test != 3 ? LampWhites() : 0.0f, c.reinhard ? 1.0f : 0.0f, 0,
-                           test == 4 ? 1.0f : 0.0f, old_lamps ? 1.0f : 0.0f, 0, 0};
-      d->SetPixelShaderConstantF(0, k, 5);
+                           test == 4 ? 1.0f : 0.0f, old_lamps ? 1.0f : 0.0f, 0, 0,
+                           za, zb, kLampFadeFrom, lamps && dist ? kLampFadeTo : 0.0f};
+      d->SetPixelShaderConstantF(0, k, 6);
       Sampler(d, 5, add ? g_r.add : nullptr, false);
       Sampler(d, 6, lamps ? (old_lamps ? g_r.lamp_mask : g_r.lamp_tag) : nullptr, false);
       Sampler(d, 7, lamps && old_lamps ? g_r.lamp_depth : nullptr, false);
-      Sampler(d, 8, lamps && old_lamps ? g_scene_depth : nullptr, false);
+      Sampler(d, 8, lamps && (old_lamps || dist) ? g_scene_depth : nullptr, false);
       Sampler(d, 9, lamps && old_lamps ? g_r.lamp_emit : nullptr, false);
       Sampler(d, 10, g_probe_cover && g_tag_resolved ? g_r.lamp_tag : nullptr, false);
       Sampler(d, 1, c.scene, false);

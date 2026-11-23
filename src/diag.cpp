@@ -391,6 +391,7 @@ volatile LONG g_win_hdr_off = 0;
 volatile LONG g_due = 0;       // GetTickCount() when the report is due (0: none)
 const char* volatile g_why = "";
 WinHdr g_hdr;                  // the thread's last Windows HDR answer
+bool g_hdr_was_on = false;     // ... any answer this run said ON (on NVIDIA: Windows turns it off for the game's screen)
 int g_changes = 0;             // focus / display / Windows HDR change lines (20 at most)
 
 void Change(const char* fmt, ...) {
@@ -405,6 +406,7 @@ void Change(const char* fmt, ...) {
 
 void NoteHdr(const WinHdr& w) {
   g_hdr = w;
+  if (w.known && w.on) g_hdr_was_on = true;
   InterlockedExchange(&g_win_hdr_off, w.known && !w.on && !UnderWine() ? 1 : 0);
 }
 
@@ -463,6 +465,15 @@ std::string Verdict(const SsHdrState& h, const Snap& s, const Chain& c) {
     return "HDR is on in the patch but the swap chain does not offer HDR10 (an SDR screen, or HDR is off for the screen): the SDR picture";
   }
   if (!h.active) return g_late ? "HDR is on in the patch but HDR10 is not out 10 s after the first frame" : "HDR is on in the patch but HDR10 is not out yet";
+  // Windows HDR was ON earlier in the run (at CreateDevice, or in the back) and is OFF now: seen on NVIDIA with DXVK,
+  // where Windows turns HDR off while the game has exclusive full screen (issue #2). Elsewhere the player may have
+  // switched it off: no cause is named.
+  if (win_known && !s.hdr.on && g_hdr_was_on)
+    return g_vendor == 0x10DE ? "the patch sends HDR10 but Windows turned HDR OFF when the game took the screen (it was ON "
+                                "before; on NVIDIA Windows does this while the game has exclusive full screen): the "
+                                "picture will look grey; see the README's HDR section"
+                              : "the patch sends HDR10 but Windows HDR went OFF during the run (it was ON before): the "
+                                "picture will look grey";
   if (win_known && !s.hdr.on) return "the patch sends HDR10 but Windows HDR is OFF: the picture will look grey";
   if (c.block && c.cs.find("HDR10_ST2084") == std::string::npos)
     return "the patch set HDR10 but DXVK's swap chain is " + Short(c.cs) + ": the picture will look wrong";
@@ -560,6 +571,13 @@ DWORD WINAPI Thread(LPVOID) {
       w = n.w, h = n.h, hz = n.hz;
       if (n.hdr != g_hdr) {
         Change("Windows HDR changed: %s -> %s", HdrText(g_hdr).c_str(), HdrText(n.hdr).c_str());
+        static bool said = false;  // back ON as the game goes to the back: Windows turned it off for the game's screen
+        if (!said && g_vendor == 0x10DE && hs.active && !fg_now && n.hdr.known && n.hdr.on && g_hdr.known && !g_hdr.on &&
+            !UnderWine()) {
+          said = true;
+          ss_log("[diag] Windows HDR is ON again with the game in the back: Windows turns it OFF while the game has "
+                 "exclusive full screen (seen on NVIDIA), so the game's picture looks grey; see the README's HDR section");
+        }
         NoteHdr(n.hdr);
       }
     }

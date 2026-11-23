@@ -3525,6 +3525,7 @@ void ss_patch_start(HMODULE self) {
   }
   ss_overlay_start();    // first: the import slots are taken before the game opens its archives
   ss_saves_start(self);  // done before the game reads its profile
+  ss_kbhook_start();     // its thread waits for the import table; the game installs its keyboard hook in WinMain
   ConfEnvironment();
   ss_vm_start(self);
   ss_renderer_start();  // before anything makes an IDirect3D9 (dxvk_fit, display.cpp, the game)
